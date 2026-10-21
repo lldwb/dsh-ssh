@@ -599,9 +599,12 @@ window.__ModuleLoader__.load({
      *
      * `SettingsFormModel` 的内置字段种类只有文本与数字，布尔要自己给出 format/parse；
      * 渲染侧同样没有内置开关行，所以用导出的 `Switch` 原语拼一行与上面两种控件同形的
-     * 布局（标签在左、开关在右、提示在下）。
+     * 布局（标签与「已覆盖 / 恢复默认」在左、开关在右、提示在下）。
      *
-     * @param {any} props - `{ id, label, hint?, checked, disabled?, onChange }`。
+     * 标签用 `span` 而不是 `label`：`Switch` 不接受 `id`/`htmlFor`，把一个 label 指到
+     * 不存在的 id 上是无效关联，而它自己的 `label` 属性已经提供了无障碍名称。
+     *
+     * @param {any} props - `{ id, label, hint?, overridden?, overriddenLabel?, resetLabel?, checked, disabled?, onChange, onReset? }`。
      * @returns {any} 元素。
      */
     function ToggleRow(props) {
@@ -614,17 +617,49 @@ window.__ModuleLoader__.load({
           jsxs('div', {
             style: { display: 'flex', alignItems: 'center', gap: '12px' },
             children: [
-              jsx('label', {
-                htmlFor: id,
-                style: { ...LABEL_STYLE, flex: '1 1 auto', minWidth: 0 },
-                children: props.label
+              jsxs('div', {
+                style: { flex: '1 1 auto', minWidth: 0, display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' },
+                children: [
+                  jsx('span', { style: LABEL_STYLE, children: props.label }),
+                  props.overridden === true
+                    ? jsxs('span', {
+                        style: { display: 'inline-flex', alignItems: 'center', gap: '6px' },
+                        children: [
+                          jsx('span', {
+                            style: {
+                              fontSize: '11px',
+                              padding: '1px 6px',
+                              borderRadius: '999px',
+                              border: '0.5px solid currentColor',
+                              opacity: 0.65
+                            },
+                            children: props.overriddenLabel
+                          }),
+                          jsx('button', {
+                            type: 'button',
+                            disabled,
+                            onClick: props.onReset,
+                            style: {
+                              fontSize: '11px',
+                              background: 'none',
+                              border: 'none',
+                              padding: 0,
+                              color: 'inherit',
+                              opacity: disabled ? 0.4 : 0.7,
+                              cursor: disabled ? 'default' : 'pointer',
+                              textDecoration: 'underline'
+                            },
+                            children: props.resetLabel
+                          })
+                        ]
+                      })
+                    : null
+                ]
               }),
               jsx(P.Switch, {
-                id,
                 checked: props.checked,
                 disabled,
                 label: props.label,
-                'aria-describedby': props.hint === undefined ? undefined : describedBy,
                 onChange: (next) => {
                   props.onChange(next === true);
                 }
@@ -1425,11 +1460,17 @@ window.__ModuleLoader__.load({
                               id: 'dsh-ssh-prefer-local-relay',
                               label: t('preferLocalRelay'),
                               hint: t('preferLocalRelayHint'),
+                              overriddenLabel: t('overridden'),
+                              resetLabel: t('reset'),
+                              overridden: state.preferLocalRelay.overridden === true,
                               // 与 Host 的默认语义一致：没有显式写 `false` 就是开启。
                               checked: state.preferLocalRelay.text !== 'false',
                               disabled: !state.writable,
                               onChange: (next) => {
                                 props.edit('preferLocalRelay', next ? 'true' : 'false');
+                              },
+                              onReset: () => {
+                                props.resetField('preferLocalRelay');
                               }
                             },
                             'preferLocalRelay'

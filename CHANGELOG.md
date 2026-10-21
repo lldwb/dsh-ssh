@@ -4,6 +4,26 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.1.2] - 2026-10-21
+
+### Fixed
+
+- **相对远端路径现在总是解析成绝对路径**。此前 `defaultRemoteDir` 为空时，`ssh_upload` / `ssh_download` / `ssh_fetch` 的 `remotePath` 会保留相对形式；而 SFTP 会话的默认目录与远端 shell 的登录目录并不保证一致，`curl -o` 与 `mkdir` 又都相对各自的工作目录——同一个相对路径可能落到两个不同位置，甚至直接失败（`curl: (23) Failure writing output to destination`）。现在没有默认目录时以**登录 home** 为基准（每条连接探测一次并缓存），与 `~` 的展开规则统一。
+- `mkdirp()` 对相对路径的处理：此前把相对路径也按根目录拼接（`a/b` → `/a/b`），现在按会话当前目录正确逐级创建。
+- `ssh_fetch` 的 `remote-direct` 模式改用 `curl -fsSL`（成功时静默、失败时显示错误），不再把下载进度条混进错误信息。
+
+版本号 1.1.2 对应 `index.js` 的 `BUILD = '2026-10-21.4'`。
+
+## [1.1.1] - 2026-10-21
+
+### Fixed
+
+- `ssh_fetch` 的 `mode` 传了枚举外的值时，现在**显式报错**（`mode 必须是 auto、local-relay 或 remote-direct 之一`），不再静默回退到默认模式。起因：实测当前 dsh 运行时**不会**在 `execute` 之前拦截参数 `enum`，非法值会真的进入工具——静默回退会让调用方以为指定模式已生效。
+- 连接池的空闲回收定时器改为**每次复用连接时重新计时**。此前只在建立连接时设一次，于是一段持续使用的会话会在连接建立满 5 分钟时被强制断开一次（虽然下一次调用会透明重连）。
+- 读取 `servers.json` 时，`{"servers": []}` 这类形状（`servers` 是数组）现在按"文件损坏"报错，而不是当作空档案继续运行。
+
+版本号 1.1.1 对应 `index.js` 的 `BUILD = '2026-10-21.3'`。
+
 ## [1.1.0] - 2026-10-21
 
 ### Added

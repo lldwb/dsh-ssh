@@ -76,7 +76,7 @@ export const inject = ['tools'];
  * Bumped whenever the observable behaviour changes, so "did the running process
  * pick up my edit" is answerable from the output alone.
  */
-export const BUILD = '2026-10-21.2';
+export const BUILD = '2026-10-21.4';
 
 /**
  * Volatile fields are editable from the settings page; the rest is load-time
