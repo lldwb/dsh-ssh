@@ -1,6 +1,6 @@
 {
   "name": "dsh-ssh",
-  "version": "1.1.0",
+  "version": "1.1.2",
   "description": "在 DeepSeek Harness 里直接连接 SSH 服务器：执行命令、上传下载文件、跑后台长任务并读取日志，不再为每次连接临时写 Python 脚本。",
   "type": "module",
   "license": "MIT",

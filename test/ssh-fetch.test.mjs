@@ -46,14 +46,16 @@ test('ssh_fetch: mode is a three-value enum and "api" is not one of them', () =>
   assert.equal(mode.type, 'string');
 });
 
-test('ssh_fetch: execute ignores an out-of-enum mode and falls back to the setting', async (t) => {
-  // The registry enforces the enum before execute runs; this asserts the
-  // in-execute fallback is the configured default rather than a crash.
+test('ssh_fetch: execute rejects an out-of-enum mode instead of falling back', async (t) => {
+  // Measured on the shipped runtime: `enum` is not enforced before `execute`, so
+  // an unknown mode really does arrive here. A silent fallback would let the
+  // caller believe the requested mode took effect; it must be an explicit error.
   fakeGlobalFetch(t, async () => okResponse('x'));
   const { byName } = toolsFor();
   const value = await byName.get('ssh_fetch').execute({ url: URL_BASE, remotePath: '/tmp/x', mode: 'api' });
-  assert.equal(value.ok, true);
-  assert.equal(value.mode, 'local-relay');
+  assert.equal(value.ok, false);
+  assert.match(value.summary, /local-relay/);
+  assert.match(value.summary, /api/);
 });
 
 // ───────────────────────────── mode resolution ────────────────────────────────
@@ -244,9 +246,9 @@ test('ssh_fetch remote-direct: builds a curl command, quotes url/path and mkdirs
   assert.equal(value.remotePath, '/root/dl/file.bin');
   assert.match(value.summary, /服务器直接下载（curl）/);
   assert.ok(sftp.mkdirs.includes('/root/dl'), 'the parent directory must be created before the download');
-  const download = commands.find((command) => command.includes('curl -fL'));
+  const download = commands.find((command) => command.includes('curl -fsSL'));
   assert.ok(download !== undefined, `no curl download command in ${JSON.stringify(commands)}`);
-  assert.equal(download, `curl -fL --retry 2 --connect-timeout 30 -o '/root/dl/file.bin' 'https://files.example.com/f.bin?a=1&b=2'`);
+  assert.equal(download, `curl -fsSL --retry 2 --connect-timeout 30 -o '/root/dl/file.bin' 'https://files.example.com/f.bin?a=1&b=2'`);
 });
 
 test('ssh_fetch remote-direct: falls back to wget when curl is absent', async () => {

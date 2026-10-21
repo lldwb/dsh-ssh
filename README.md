@@ -4,7 +4,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 
-> 当前版本 **1.1.0**（[更新日志](./CHANGELOG.md)）· 仓库 <https://github.com/lldwb/dsh-ssh>（公开，MIT）
+> 当前版本 **1.1.2**（[更新日志](./CHANGELOG.md)）· 仓库 <https://github.com/lldwb/dsh-ssh>（公开，MIT）
 
 ## 为什么需要它
 
@@ -83,7 +83,7 @@ npm install
 1. **添加服务器**：打开「设置 → 插件 → SSH 服务器」，点「添加服务器」填名称、地址、端口（默认 22）、用户、认证方式与密码；或者直接让模型调用：
 
    ```text
-   ssh_host action="add" name="gpu" host="10.0.0.10" user="root" auth="password" password="<你的密码>" note="AutoDL GPU 训练机" defaultRemoteDir="/root/autodl-tmp"
+   ssh_host action="add" name="gpu" host="192.0.2.10" user="root" auth="password" password="<你的密码>" note="AutoDL GPU 训练机" defaultRemoteDir="/root/autodl-tmp"
    ```
 
    > 密码优先在设置页输入：从设置页输入的密码不会出现在会话记录里；而写在工具参数里的 `password` 会留在会话日志中（见「安全说明」）。
@@ -183,7 +183,7 @@ npm install
 | `local-relay`（默认，当 `preferLocalRelay=true`） | 在**运行 dsh 的机器**上流式下载到临时文件，再经 SFTP 上传到 `remotePath`，结束后清理临时文件 | 服务器外网慢 / 限速 / 被墙，或本机有代理而服务器没有；要求本机能访问该 URL，且下载期间占用本机临时磁盘 |
 | `remote-direct` | 在**服务器**上执行 `curl -fL --retry 2 --connect-timeout 30 -o <path> <url>`；没有 `curl` 时用 `wget`；两者都没有则报错并提示改用 `local-relay` | 文件大、服务器带宽好、不想占本机磁盘/带宽 |
 
-`mode` 不传或传 `auto` 时，用插件设置 `preferLocalRelay` 决定默认模式；返回的 `mode` 是**实际生效**的模式（不会是 `auto`）。
+`mode` 不传或传 `auto` 时，用插件设置 `preferLocalRelay` 决定默认模式；返回的 `mode` 是**实际生效**的模式（不会是 `auto`）。传了枚举外的值会直接报错——当前 dsh 运行时不会在工具执行前拦截参数枚举，所以非法值若不显式拒绝就会被静默忽略。
 
 | 参数 | 类型 | 必填 | 默认 | 说明 |
 |---|---|---|---|---|
@@ -243,11 +243,11 @@ ssh_fetch host="gpu" url="https://example.com/models/weights.pt" remotePath="wei
 
 ## 典型场景：AutoDL 上的训练闭环
 
-下面是一条会话里从零到取回权重的完整流程（地址与密码是占位值，换成你自己的）：
+下面是一条会话里从零到取回权重的完整流程（地址与密码是示例值，换成你自己的）：
 
 ```text
 # 1. 存服务器（也可以从设置页添加）
-ssh_host action="add" name="gpu" host="10.0.0.10" user="root" auth="password" password="<你的密码>" note="AutoDL GPU 训练机" defaultRemoteDir="/root/autodl-tmp"
+ssh_host action="add" name="gpu" host="192.0.2.10" user="root" auth="password" password="<你的密码>" note="AutoDL GPU 训练机" defaultRemoteDir="/root/autodl-tmp"
 
 # 2. 验证连通
 ssh_host action="test" name="gpu"
@@ -323,7 +323,7 @@ ssh_download host="gpu" remotePath="runs/best.pt" localPath="D:\\runs\\best.pt"
   "servers": {
     "gpu": {
       "name": "gpu",
-      "host": "10.0.0.10",
+      "host": "192.0.2.10",
       "port": 22,
       "user": "root",
       "auth": "password",
@@ -372,7 +372,7 @@ ssh_download host="gpu" remotePath="runs/best.pt" localPath="D:\\runs\\best.pt"
 - 添加 / 编辑 / 删除服务器；
 - 输入或替换登录密码、私钥口令（**只写不读**：页面只显示「已配置 / 未配置」，不会回显密码）；
 - 「测试连接」按钮：等价于 `ssh_host action="test"`，返回主机名 / 内核 / 运行时长 / 延迟；
-- 「默认行为」区里对应 `preferLocalRelay` 的开关：决定 `ssh_fetch` 不传 `mode` 时的默认模式；
+- 「默认行为」区的「优先本地下载后上传」开关：对应 `preferLocalRelay`；**开启**（默认）= 先在运行 dsh 的这台机器下载，再经 SFTP 上传到服务器（适合服务器外网慢或受限）；**关闭** = 让服务器自己用 `curl`/`wget` 取（适合服务器带宽好、文件大）。
 - 查看状态：构建版本、dsh home、`servers.json` 路径、当前密码后端（`credentials-service` / `encrypted-file`）、服务器数量。
 
 密码从设置页输入不会进会话记录，这是推荐方式；从工具参数传密码则会让它留在会话日志里。

@@ -247,8 +247,14 @@ test('resolveRemotePath joins a relative path onto the profile default directory
   assert.equal(resolveRemotePath('logs/a.txt', '/root/autodl-tmp'), '/root/autodl-tmp/logs/a.txt');
   assert.equal(resolveRemotePath('logs/a.txt', '/root/autodl-tmp/'), '/root/autodl-tmp/logs/a.txt');
   assert.equal(resolveRemotePath('logs/a.txt', '/'), '/logs/a.txt');
-  assert.equal(resolveRemotePath('logs/a.txt', ''), 'logs/a.txt');
-  assert.equal(resolveRemotePath('logs/a.txt'), 'logs/a.txt');
+  // No default directory: the resolved home becomes the base so the result stays
+  // absolute. SFTP and a remote shell disagree about "the current directory", so
+  // a relative destination would resolve to two different files.
+  assert.equal(resolveRemotePath('logs/a.txt', '', '/home/alice'), '/home/alice/logs/a.txt');
+  assert.equal(resolveRemotePath('logs/a.txt', undefined, '/home/alice'), '/home/alice/logs/a.txt');
+  // With neither a default directory nor a home there is nothing safe to join.
+  assert.throws(() => resolveRemotePath('logs/a.txt', ''), /needs a default remote directory or a resolved home/);
+  assert.throws(() => resolveRemotePath('logs/a.txt'), /needs a default remote directory or a resolved home/);
 });
 
 test('resolveRemotePath expands ~ only when a resolved home is supplied', () => {
