@@ -1,0 +1,77 @@
+{
+  "name": "dsh-ssh",
+  "version": "1.1.0",
+  "description": "在 DeepSeek Harness 里直接连接 SSH 服务器：执行命令、上传下载文件、跑后台长任务并读取日志，不再为每次连接临时写 Python 脚本。",
+  "type": "module",
+  "license": "MIT",
+  "private": true,
+  "icon": "./icon.svg",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "lib/**",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "test/**",
+    "package-lock.json"
+  ],
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "test": "node --test \"test/**/*.test.mjs\""
+  },
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "cordis",
+    "plugin",
+    "bundle",
+    "ssh",
+    "sftp",
+    "remote",
+    "server",
+    "autodl"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lldwb/dsh-ssh.git"
+  },
+  "homepage": "https://github.com/lldwb/dsh-ssh#readme",
+  "bugs": {
+    "url": "https://github.com/lldwb/dsh-ssh/issues"
+  },
+  "meta": {
+    "title": "SSH 服务器",
+    "description": "在 dsh 里直接连 SSH 服务器：执行命令、上传下载文件、跑后台长任务看日志，不用再写连接脚本。"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-plugin-manager",
+        "@deepseek-ai/dsh-api-remotes"
+      ]
+    }
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "^3.18.5",
+    "ssh2": "^1.17.0"
+  }
+}

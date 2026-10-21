@@ -1,0 +1,10 @@
+{
+  "meta": {
+    "title": "SSH servers",
+    "description": "Connect to SSH servers from dsh: run commands, move files, and poll long-running jobs."
+  },
+  "settings": {
+    "title": "SSH servers",
+    "description": "Manage saved servers, login credentials and connection tests."
+  }
+}
