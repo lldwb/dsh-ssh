@@ -1,0 +1,19 @@
+# dsh-ssh —— 全局挂载：任何会话都能连服务器。
+#
+# 这里**故意**不按 preset 挂载：连服务器是通用能力（标准模式里也要能用），
+# 不是创造模式的专属工具。参考 dsh-preset-probe 的全局 insert 口径。
+#
+# 行 id 同时是设置页命名空间（settings-page skill §4.2）：改这里必须同步改
+# index.js 的 SETTINGS_NAMESPACE 与 client.js 的 SETTINGS_NS。
+- insert:
+    - id: dsh-ssh
+      name: 'dsh-ssh'
+      config:
+        # 默认服务器名（agent 调工具不传 host 时用）。空字符串表示"必须显式指定"。
+        defaultHost: ''
+        # 单次工具返回的最大输出字节数（stdout+stderr 各自上限）。
+        maxOutputBytes: 65536
+        # 建立 SSH 连接的超时（毫秒）。
+        connectTimeoutMs: 15000
+        # ssh_fetch 默认怎么取文件：true = 本机下载后 SFTP 上传；false = 服务器自己 curl/wget。
+        preferLocalRelay: true

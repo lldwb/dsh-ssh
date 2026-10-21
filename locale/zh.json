@@ -1,0 +1,10 @@
+{
+  "meta": {
+    "title": "SSH 服务器",
+    "description": "在 dsh 里直接连 SSH 服务器：执行命令、上传下载文件、跑后台长任务并读取日志。"
+  },
+  "settings": {
+    "title": "SSH 服务器",
+    "description": "管理服务器档案、登录密码与连通性测试。"
+  }
+}
