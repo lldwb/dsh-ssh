@@ -4,6 +4,14 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.1.4] - 2026-10-27
+
+### Changed
+
+- 插件图标改为手绘 SVG（`icon.svg`，替换上一轮的 PNG 位图），对齐 dsh 官方插件图标的矢量语言（36×36、透明底、官方蓝色渐变、同一描边与留白）。
+
+版本号 1.1.4 对应 `index.js` 的 `BUILD = '2026-10-27.2'`。
+
 ## [1.1.3] - 2026-10-27
 
 ### Changed
