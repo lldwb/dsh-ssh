@@ -4,6 +4,14 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.1.3] - 2026-10-27
+
+### Changed
+
+- 插件图标换成 gpt-image-2.5 生成的 PNG 图标（256×256，圆角透明）。
+
+版本号 1.1.3 对应 `index.js` 的 `BUILD = '2026-10-27.1'`。
+
 ## [1.1.2] - 2026-10-21
 
 ### Fixed

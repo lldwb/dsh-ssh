@@ -431,7 +431,7 @@ dsh-ssh/
 │   └── rpc.mjs         # 设置页的 RPC 通道（/dsh-ssh）
 ├── cordis.patch.yml    # 顶层 insert：全局挂载 + 四个配置项
 ├── locale/{zh,en}.json # 插件卡片标题与描述
-├── icon.svg
+├── icon.png
 ├── README.md
 └── CHANGELOG.md
 ```
