@@ -436,6 +436,23 @@ dsh-ssh/
 └── CHANGELOG.md
 ```
 
+## 兼容性与回归记录（DSH 0.2.2-rc.1）
+
+适配目标：已安装的 **DSH 0.2.2-rc.1**。本插件在 0.2.2 下**无需改代码**——用到的 `ctx.tools` / `ctx.credentials` /
+`ctx.connection.rpc.handle` / `ctx.webServer`、`Config` 的 `.volatile()` 与 `@deepseek-ai/dsh-client-ui-primitives`
+的导出（`SettingsForm` / `SettingsFormModel` / `SettingsValueField` / `SettingsSecretField` / `Button` / `Toast`）
+在 0.2.2 均未破坏。本次只补回归证据与版本记录。
+
+- **Host 行**：真实桌面版（0.2.2-rc.1，profile `desktop`，行 `ssh`）`fiberPhase=active`；`ssh_host action="list"`
+  正常返回已保存服务器与密码配置状态。
+- **devkit web 沙箱**（`ui-ssh`）：`dsh-ssh@1.1.4 is loaded: its client half is in the page's manifest`
+  （引号内是沙箱当时的实际输出，当时 link 的版本是 1.1.4；本次只升版本号 + 写文档，未改代码）；
+  真实点击流程（关「开始使用」→ 插件 → 查看 SSH 服务器）打开设置页：服务器列表（0 台，含「刷新」「添加服务器」）、
+  默认行为三段（默认服务器下拉、单次输出上限 65536、连接超时 15000、优先本地下载后上传开关）、「保存」、
+  存储位置（`servers.json` 路径 + 密钥存储「加密文件」+ 构建戳）全部渲染；点「刷新」走 RPC 成功回包；
+  全程**控制台 0 错误**。
+- **离线单测**：`node --test "test/**/*.test.mjs"` → **131 / 131 通过**。
+
 ## 仓库与许可证
 
 - 仓库：<https://github.com/lldwb/dsh-ssh>（公开）

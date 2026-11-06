@@ -4,6 +4,18 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.1.5] - 2026-11-06
+
+### Changed
+
+- 适配 **DSH 0.2.2-rc.1**。**无代码改动**——用到的 Host / Client 契约在 0.2.2 未发生破坏性变化，
+  本次只补回归证据与版本记录。`node --test` → 131/131 通过。
+- 回归证据：真实桌面版（0.2.2-rc.1）行 `ssh` 为 `active`，`ssh_host list` 正常；devkit web 沙箱（`ui-ssh`）
+  的 client 半进入页面清单，点「插件 → SSH 服务器」后设置页完整渲染（服务器列表 / 默认行为三段 / 保存 /
+  存储位置），点「刷新」RPC 成功回包，控制台 **0 错误**。
+
+版本号 1.1.5 对应 `index.js` 的 `BUILD = '2026-11-06.1'`。
+
 ## [1.1.4] - 2026-10-27
 
 ### Changed
