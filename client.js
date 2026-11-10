@@ -249,6 +249,44 @@ window.__ModuleLoader__.load({
      */
     const SETTINGS_NS = 'dsh-ssh';
 
+    /**
+     * 「内置插件配置」卡片插画的注册键。
+     *
+     * DSH 插件页的卡片插画由随附的 plugin-manager 客户端写死（只有 shell / agent-loop /
+     * subagent / web-search 四个官方 id 的映射表），第三方插件没有声明入口；唯一的通道是
+     * `globalThis.__DSH_PLUGIN_ITEM_ARTWORK__` 这个全局注册表 —— 它由 dsh-plugin-devkit 的
+     * `scripts/patch-plugin-item-artwork.mjs` 给随附 bundle 补上查询逻辑。没打补丁的部署
+     * 不会读它，注册只是往一个没人看的对象里写一个键，无副作用。
+     */
+    const ITEM_ARTWORK_ID = 'dsh-ssh';
+
+    /**
+     * 卡片插画的 data URI：包根 `icon.svg` 的原始字节做 base64。
+     *
+     * 必须与 `icon.svg` 逐字节一致 —— `test/client-artwork.test.mjs` 同时读两处做断言。
+     * 改图标后同步这一行：
+     *   node ../dsh-plugin-devkit/scripts/embed-plugin-artwork.mjs .
+     */
+    const ITEM_ARTWORK_URI =
+      'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMzYiIGhlaWdodD0iMzYiIHZpZXdCb3g9IjAgMCAzNiAzNiIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KICA8cmVjdCB4PSI3IiB5PSI3LjQiIHdpZHRoPSIyMiIgaGVpZ2h0PSIxMi42IiByeD0iMi42IiBmaWxsPSJ1cmwoI3NzaEcxKSIvPgogIDxwYXRoIGQ9Ik0xMy42IDExLjJMMTcuMiAxNC44TDEzLjYgMTguNCIgc3Ryb2tlPSIjRkZGRkZGIiBzdHJva2Utd2lkdGg9IjIuNCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8+CiAgPHBhdGggZD0iTTE5LjIgMTguNEgyMS44IiBzdHJva2U9IiNGRkZGRkYiIHN0cm9rZS13aWR0aD0iMi40IiBzdHJva2UtbGluZWNhcD0icm91bmQiLz4KICA8cmVjdCB4PSI3IiB5PSIyMi40IiB3aWR0aD0iMjIiIGhlaWdodD0iMyIgcng9IjEuNSIgZmlsbD0idXJsKCNzc2hHMikiLz4KICA8cmVjdCB4PSI3IiB5PSIyNi40IiB3aWR0aD0iMjIiIGhlaWdodD0iMyIgcng9IjEuNSIgZmlsbD0idXJsKCNzc2hHMikiLz4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0ic3NoRzEiIHgxPSIxOCIgeTE9IjcuNCIgeDI9IjE4IiB5Mj0iMjAiIGdyYWRpZW50VW5pdHM9InVzZXJTcGFjZU9uVXNlIj4KICAgICAgPHN0b3Agc3RvcC1jb2xvcj0iIzY5QjlGRiIvPgogICAgICA8c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiMzMjRERTIiLz4KICAgIDwvbGluZWFyR3JhZGllbnQ+CiAgICA8bGluZWFyR3JhZGllbnQgaWQ9InNzaEcyIiB4MT0iMTgiIHkxPSIyMi40IiB4Mj0iMTgiIHkyPSIyOS40IiBncmFkaWVudFVuaXRzPSJ1c2VyU3BhY2VPblVzZSI+CiAgICAgIDxzdG9wIHN0b3AtY29sb3I9IiM0NUU3QTQiLz4KICAgICAgPHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjMDU5MDlEIi8+CiAgICA8L2xpbmVhckdyYWRpZW50PgogIDwvZGVmcz4KPC9zdmc+Cg==';
+
+    /**
+     * 把本插件的卡片插画登记进 DSH 的全局注册表。
+     *
+     * 幂等；返回的注销函数只在值仍是自己写的那一条时删除，避免误删同 id 的后来者。
+     *
+     * @returns {() => void} 注销函数，交给 `ctx.effect` 回收。
+     */
+    function registerItemArtwork() {
+      const shared = globalThis;
+      if (shared.__DSH_PLUGIN_ITEM_ARTWORK__ === undefined) shared.__DSH_PLUGIN_ITEM_ARTWORK__ = {};
+      const registry = shared.__DSH_PLUGIN_ITEM_ARTWORK__;
+      registry[ITEM_ARTWORK_ID] = ITEM_ARTWORK_URI;
+      return () => {
+        if (registry[ITEM_ARTWORK_ID] === ITEM_ARTWORK_URI) delete registry[ITEM_ARTWORK_ID];
+      };
+    }
+
     /** 槽位 id：用自己的 id 并排新增，复用别人的 id 会顶掉别人的页面。 */
     const SLOT_ID = 'dsh-ssh';
 
@@ -2002,6 +2040,7 @@ window.__ModuleLoader__.load({
     function apply(ctx) {
       const t = ctx.locale.bind(NS);
       ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-ssh: 词典');
+      ctx.effect(() => registerItemArtwork(), 'dsh-ssh: 卡片插画');
 
       const card = new SshCardController(ctx.configForms.get(SETTINGS_NS), ctx, t);
       ctx.effect(

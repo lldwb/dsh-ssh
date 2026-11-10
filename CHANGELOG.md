@@ -4,6 +4,19 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.1.6] - 2026-11-10
+
+### Changed
+
+- **图标按官方矢量语言重绘**：36×36 蓝渐变终端窗口 + 白色 `>_` + 两条青绿服务器条，语义收敛为
+  「远程终端 + 远端主机」；配色只用官方 artwork 调色板（`#69B9FF→#324DE2`、`#45E7A4→#05909D`）。
+  规范见 devkit skill `dsh-plugin-development/references/icon-design-language.md`。
+- **「内置插件配置」卡片插画**：client 半新增 `ITEM_ARTWORK_ID` / `ITEM_ARTWORK_URI` /
+  `registerItemArtwork()`，在 `apply()` 的 `ctx.effect` 里把 `icon.svg` 的 data URI 登记进
+  `globalThis.__DSH_PLUGIN_ITEM_ARTWORK__['dsh-ssh']`。没打 devkit 补丁的部署不受影响（该注册表没人读）。
+- 新增 `test/client-artwork.test.mjs`（6 用例）：常量与 `icon.svg` 逐字节一致、36×36 准入、
+  注册/注销语义（含"不误删同 id 后来者"）。`node --test` → 137/137 通过。
+
 ## [1.1.5] - 2026-11-06
 
 ### Changed
