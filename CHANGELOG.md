@@ -4,6 +4,15 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.1.7] - 2026-11-11
+
+### Changed
+
+- **图标重绘**：36×36 蓝渐变终端窗口 + 白色 `>_` + 青绿服务器机架（2 个 LED + 状态线），
+  语义仍是「远程终端 + 远端主机」，机架由两条独立色条收敛为一个带指示灯的机箱轮廓。
+- **卡片插画 data URI 同步**：用 devkit 的 `scripts/embed-plugin-artwork.mjs` 把新 `icon.svg`
+  字节重新写入 `client.js` 的 `ITEM_ARTWORK_URI`（`--check` 一致）；`node --test` → 137/137 通过。
+
 ## [1.1.6] - 2026-11-10
 
 ### Changed
