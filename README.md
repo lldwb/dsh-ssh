@@ -436,12 +436,32 @@ dsh-ssh/
 └── CHANGELOG.md
 ```
 
-## 兼容性与回归记录（DSH 0.2.2-rc.1）
+## 兼容性与回归记录（DSH 0.2.2-rc.1 / rc.2）
 
-适配目标：已安装的 **DSH 0.2.2-rc.1**。本插件在 0.2.2 下**无需改代码**——用到的 `ctx.tools` / `ctx.credentials` /
-`ctx.connection.rpc.handle` / `ctx.webServer`、`Config` 的 `.volatile()` 与 `@deepseek-ai/dsh-client-ui-primitives`
-的导出（`SettingsForm` / `SettingsFormModel` / `SettingsValueField` / `SettingsSecretField` / `Button` / `Toast`）
-在 0.2.2 均未破坏。本次只补回归证据与版本记录。
+适配目标：已安装的 **DSH 0.2.2-rc.2**（上一轮是 rc.1）。本插件在两代 rc 下**均无需改代码**——
+用到的 `ctx.tools` / `ctx.credentials` / `ctx.connection.rpc.handle` / `ctx.webServer`、
+`Config` 的 `.volatile()`、`ctx.inject(['settings'])` + `settings.configure({ auto: false }, fiber)`
+与 `@deepseek-ai/dsh-client-ui-primitives` 的导出（`SettingsForm` / `SettingsFormModel` /
+`settingsNumberField` / `SettingsValueField` / `Switch` / `SettingsSecretField` / `Button` / `Toast`）
+均未破坏。
+
+### DSH 0.2.2-rc.2 回归（1.1.8）
+
+- **核对**：Host 侧 `settings.configure(presentation, owner)` 签名、`credentials` 的
+  `resolve/describe/set/unset`、`tools.register`、自建 RPC 通道（`connection.rpc.handle` /
+  `webServer`）在 rc.2 源码里均未变；Client 侧 `configForms.get/whileServed`、`plugins.item`
+  槽位、`remote.credentials`、上述 primitives 导出在 rc.2 中均存在。
+- **devkit web 沙箱**（`b-ssh`）：`dsh-ssh@1.1.7 is loaded: its client half is in the page's manifest`
+  （引号内是沙箱当时的实际输出，当时 link 的版本是 1.1.7；本次只升版本号 + 写文档，未改代码），
+  打开时**控制台 0 错误**；真实点击流程（关预览说明 /「开始使用」→ 侧边栏「插件」→ 点「SSH 服务器」）
+  打开设置页：服务器列表（0 台，含「刷新」「添加服务器」）、默认行为三段（默认服务器下拉、
+  单次输出上限 65536、连接超时 15000、优先本地下载后上传开关）、「保存」、存储位置
+  （`servers.json` 路径 + 密钥存储 + 构建戳）全部渲染；点「添加服务器」后表单完整出现
+  （名称 / 主机 / 端口 22 / 用户名 / 认证方式 / 密码 / 私钥 / 备注 / 默认远程目录 + 添加/取消），
+  点「取消」后表单关闭、空状态恢复。
+- **离线单测**：`node --test "test/**/*.test.mjs"` → **137 / 137 通过**。
+
+### DSH 0.2.2-rc.1 回归（1.1.5）
 
 - **Host 行**：真实桌面版（0.2.2-rc.1，profile `desktop`，行 `ssh`）`fiberPhase=active`；`ssh_host action="list"`
   正常返回已保存服务器与密码配置状态。
