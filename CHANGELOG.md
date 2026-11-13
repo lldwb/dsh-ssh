@@ -4,6 +4,27 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.1.9] - 2026-11-14
+
+### Changed
+
+- 适配 **DSH 0.2.2-rc.3**：设置页的 `/dsh-ssh` prefix 路由在 `webServer.register()` 里显式声明
+  `auth: 'required'`（`lib/rpc.mjs`），并同步 `BUILD`。
+  - 目标版本 WebServer 新增 `auth: 'anonymous' | 'required' | 'deny'`（默认 `required`），官方
+    `client-connection` 的 `/api` 路由同样显式写 `'required'`。本路由只给已登录的设置页用，
+    显式声明让「必须认证」进入注册契约，不再依赖默认值。
+  - **认证语义不变**：handler 内继续用 `connection.admit(req)`——rc.2 的 WebServer 完全不做路由
+    准入（`handle()` 直接调 `handler(req, res)`），`admit()` 是 rc.2 上唯一的认证；目标版本
+    `admit()` 仍在且 `PeerAdmission` 形状不变（`{peer}` | `{rejection}`），保留为双保险。
+  - **向后兼容 rc.2**：rc.2 的 `register()` 只做 `(kind, path)` 去重后原样存表，多出的 `auth`
+    键被静默忽略（已从本机 `app.asar` 的 rc.2 `dsh-host-webserver/lib/index.js` 核实）。
+- **核对无其它破坏点**：`ctx.tools.register(definition)`、`ctx.get('credentials')` 的
+  `resolve/describe/set/unset`（签名与 `CredentialInfo.configured` 均未变）、
+  `settings.configure({auto:false}, owner)`、`configForms.get/whileServed`、`plugins.item`、
+  `remote.credentials` 注入名、`connection.rpc.call` 在目标版本均存在；未使用 `ctx.root`、
+  `Service.config`、`rankByName`、已删除包子路径等破坏点。
+- `node --test` → **137/137** 通过。
+
 ## [1.1.8] - 2026-11-12
 
 ### Changed
