@@ -4,6 +4,16 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.1.10] - 2026-11-19
+
+### Changed
+
+- 适配 **DSH 0.2.2-rc.5**：删除设置页 RPC 路由上 master-only 的 `auth: 'required'`
+  死配置（rc.5 的 `WebRoute` 没有 `auth` 字段，`register()` 会静默忽略），并修正
+  「rc.3 起路由默认 `required`、未登录 503」的错误注释——该机制只存在于 master 基线。
+  **认证语义不变**：handler 内 `connection.admit(req)` 是 rc.5 上唯一的准入判断，保留不动。
+- 同步 `BUILD` 构建戳；单测 `node --test "test/**/*.test.mjs"` → **137/137 通过**。
+
 ## [1.1.9] - 2026-11-14
 
 ### Changed
