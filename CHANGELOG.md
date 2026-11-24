@@ -4,6 +4,85 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.3.0] - 2026-11-24
+
+### Added
+
+- **Windows 远端支持（自动识别）**：`ssh_host test` / `ssh_exec` / `ssh_upload` / `ssh_download` /
+  `ssh_fetch` / `ssh_job` 全部可在 Windows OpenSSH 上使用。
+  - 平台探测：先 `uname -s`（成功 = POSIX），失败再用 PowerShell 读 Windows 版本（成功 = Windows）；
+    MINGW / MSYS / CYGWIN 的默认 shell 也算 Windows。结果缓存在连接上，每条连接只探测一次。
+  - 命令执行：Windows 上统一包进
+    `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand <base64>`；
+    包装器设置 UTF-8 输出、分离 stdout / stderr，用 per-call nonce 标记带回真实退出码
+    （命令自己 `exit N` 时用 SSH 通道关闭码兜底），并支持 `cwd`。修掉了 1.2.0 在 Windows 上
+    `'uptime' 不是内部或外部命令` 的误报（根因是 POSIX 探测命令 + `printf $HOME` 探测 home）。
+  - 路径：逻辑路径用 Windows 写法，SFTP 边界转 `/C:/...`；`defaultRemoteDir`、`~`、相对路径、
+    `C:\` / `C:/` / `/C:/` 都支持；UNC 路径明确报错。
+  - `ssh_job`：Windows 上用**计划任务**启动（`Start-Process` 的子进程会随 SSH 会话被杀，
+    实测计划任务可存活）；`job.ps1` 以 UTF-8 BOM 写入（PowerShell 5.1 否则按 ANSI 读，中文路径
+    会变成 `娴嬭瘯` 之类）；用户命令在子 PowerShell 中运行，命令里的 `exit` 不会吞掉退出码文件；
+    `status` / `log` 走 SFTP（字节范围精确）；`stop` 结束进程树、写 `job.exit=143` 并删除计划任务；
+    任务脚本在写完退出码后还会**自行注销计划任务注册**（运行中的实例不受影响，实测），所以
+    已完成但从未被轮询的任务也不会留下计划任务；`status` / `list` 仍会兜底清扫崩溃任务。
+  - `ssh_fetch remote-direct`：Windows 上依次用 `curl.exe` / `wget.exe` / PowerShell
+    `Invoke-WebRequest`。
+  - 新增 `lib/windows.mjs`（包装器、路径、计划任务脚本）与 `test/windows.test.mjs`（40 条）。
+  - 新增 `test/live-windows.mjs`：env 驱动的 Windows 手动 E2E（17 个 step，缺环境变量时跳过），
+    覆盖 UTF-8 / 退出码 / cwd / 路径解析 / 文件与目录传输 / 两种 fetch / job 全流程 / 计划任务
+    自注销与远端清理。用法见文件头注释。
+- 文档：README 新增「Windows 远端」一节，已知限制与故障排查同步；`ssh-remote` skill 正文补充
+  Windows 用法（命令按 PowerShell 写、路径写法、命令长度上限、计划任务语义）。
+
+### Fixed（发布前独立审查发现）
+
+- **Windows `ssh_job` 丢失命令退出码**：用户命令在子 PowerShell 中运行，而 PowerShell 进程默认
+  以 0 退出，父脚本读到的 `$LASTEXITCODE` 恒为 0 —— `cmd /c exit 3` 会被记成成功。子脚本现在
+  显式 `exit $dshChildCode`（取自 `$LASTEXITCODE`），job.exit 记录真实退出码。
+- **`Write-Host` / `Write-Warning` / `Write-Verbose` 的 CLIXML 噪音与丢失**：包装器原先只合并
+  `2>&1`，信息流（6）/警告（3）/详细（4）未合并，`Write-Host` 被 PowerShell 序列化成
+  `#< CLIXML` 写进 stderr（一次 `ssh_exec` 可达 1 KB），job 日志里的 `Write-Warning` 直接丢失。
+  现在包装器与 job 子脚本都合并 `2>&1 3>&1 4>&1 6>&1` 并按记录类型分流
+  （Error/Warning/Verbose/Debug → stderr，其余 → stdout）。
+- **计划任务起不来却返回幻影 job**：`ssh_job start` 注册任务后轮询 PID，拿不到就静默返回
+  `pid: null`，调用方此后永远 `unknown`。现在改为查询 Task Scheduler 的 state / LastTaskResult
+  并抛出可读错误，同时清掉任务注册。
+- **计划任务主体改为 S4U**：默认 `Interactive` 只在该用户有交互式登录会话时才能启动（无头 SSH
+  主机的常态是不满足）。改用 `New-ScheduledTaskPrincipal -LogonType S4U`，并用 canonical
+  `WindowsIdentity` 名字（实测工作组机器上 `$env:USERDOMAIN` 是 `WORKGROUP`，
+  `WORKGROUP\user` 无法映射）。S4U 不保存密码，任务只能访问本地资源。
+- **CJK 日志的 `nextOffset` 漂移**：原实现按「解码后字符串的 UTF-8 字节数」推进 offset，而 SFTP
+  字节范围可能切在多字节字符中间（U+FFFD + 每次多算 1–2 字节）。现在 `readRemoteRange` 回退到
+  UTF-8 字符边界，`log` 用实际消费的 `bytes` 推进。
+- **`stop` 对已结束任务伪报 143**：进程已不存在（`GONE`）时不再写 `job.exit=143`。
+- **慢链路上 `ssh_job start` 过慢**：PID 轮询原先每轮新开一个 SFTP 会话（最多 15 次），实测
+  慢链路下 start 需要 84–202 秒。现在 PID 等待在注册脚本内部完成（一次 exec 往返），失败时
+  保留 job 目录并在错误里说明，便于排查。
+- **`maxBytes` 1–3 的 CJK 日志不前进**：小于一个字符的窗口会被 UTF-8 边界 trim 成 0 字节，
+  按 `truncated` 循环的调用方会空转；现在自动加宽到能容纳一个字符的窗口。
+- **PID 缺失的诊断时机**：若 Task Scheduler 显示任务已在 `Running`，先再等一轮（3 秒）才报错，
+  避免把「慢启动」误判成「起不来」。
+- **命令长度上限文案**：实测约 1900 字符，文档、报错与注释从「约 2000」修正。
+- **测试补强**：`test/windows.test.mjs` 34 → 40 条（子脚本退出码、流合并、空 taskName、
+  UTF-8 字节边界、1 字节窗口、stop 语义、PID 缺失诊断）；`test/live-windows.mjs` 增加
+  Write-Host、失败命令退出码、CJK 分块（100 字节，真正切在多字节字符中间）、计划任务清理断言。
+- 其余审查意见：`env` 双重下发、过期注释、Windows job 目录硬编码、`ssh_job` 描述与
+  README 口径同步。
+
+### Changed
+
+- `ssh_exec` / `ssh_job` 的 `command` 在 Windows 远端按 **PowerShell** 语法解释（POSIX 远端不变）。
+- `ssh_host test` 的 Windows 探测改用 `MachineName` / `OSVersion` / `Win32_OperatingSystem` 的
+  启动时间（`[Environment]::TickCount64` 在 PowerShell 5.1 上不存在，已避开）。
+- `node --test "test/**/*.test.mjs"` → **189/189 通过**（原 149 条全绿 + 新增 40 条）。
+- 真实主机端到端（一台 Windows 10.0.26200 OpenSSH 验证机，默认 shell 为 cmd.exe）：
+  开发期自有 e2e 20/20 通过——`ssh_host test`（返回
+  `platform: Windows 10.0.26200.0`）/ exec（UTF-8 中文、退出码、stderr 分离、`cwd=~` 与相对
+  路径、长命令的可执行报错）/ upload · download（`C:\` 绝对路径、目录树、中文+空格文件名）/
+  fetch（local-relay + remote-direct）/ job（start → status → log → list；长任务 stop 后退出码
+  143、进程消失）。发布前的独立 reviewer 复验 PASS（3 个 Major 关闭），独立 verifier 的
+  36 用例矩阵与针对性复验结果见 README「回归记录」。开发过程中的残留探测目录已清理。
+
 ## [1.2.0] - 2026-11-24
 
 ### Changed

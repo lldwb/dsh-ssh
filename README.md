@@ -4,7 +4,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 
-> 当前版本 **1.2.0**（[更新日志](./CHANGELOG.md)）· 仓库 <https://github.com/lldwb/dsh-ssh>（公开，MIT）
+> 当前版本 **1.3.0**（[更新日志](./CHANGELOG.md)）· 仓库 <https://github.com/lldwb/dsh-ssh>（公开，MIT）
 
 ## 为什么需要它
 
@@ -25,7 +25,8 @@
 |---|---|
 | **六个工具** | `ssh_host`（服务器档案）、`ssh_exec`（执行命令）、`ssh_upload` / `ssh_download`（SFTP 文件与目录）、`ssh_fetch`（从 URL 取文件到服务器）、`ssh_job`（后台长任务） |
 | **连接复用** | 每台服务器复用一条 SSH 连接（keepalive 10 秒），一次会话里几十次调用只付一次握手成本；服务器档案变化或连接断开时自动重连；每条连接最长保持 5 分钟，到期自动回收（`unref`，不挂住进程），下次调用透明重连 |
-| **后台长任务** | `setsid nohup` 启动，日志写在远端自己的文件里，按字节偏移增量读取——工具调用之间不需要保持连接，断线也不影响训练 |
+| **后台长任务** | `setsid nohup` 启动（Windows 上改用计划任务），日志写在远端自己的文件里，按字节偏移增量读取——工具调用之间不需要保持连接，断线也不影响训练 |
+| **Windows 远端**（1.3.0） | 自动识别远端平台；Windows 上的命令走 PowerShell（UTF-8 输出、真实退出码），上传 / 下载 / 取文件 / 后台任务全部可用，`ssh_host test` 不再把 Windows 误报成连接失败 |
 | **密码不进配置文件** | 服务器档案只有描述与凭据引用；密码存在 dsh 凭据库（没有该服务时降级为加密文件） |
 | **设置页** | 设置 → 插件 → SSH 服务器：服务器增删改、密码输入、测试连接、状态 |
 | **全局可用** | 插件行插在 Host 顶层，任何会话（标准 / 创造模式）都能调用 |
@@ -180,7 +181,7 @@ npm install
 | 参数 | 类型 | 必填 | 默认 | 说明 |
 |---|---|---|---|---|
 | `host` | string | 否 | — | 服务器名；有 `defaultHost` 或只有一台服务器时可省 |
-| `command` | string | **是** | — | 按 POSIX shell（bash/sh）写的命令 |
+| `command` | string | **是** | — | 命令：Linux/macOS 按 POSIX shell（bash/sh）写，Windows 按 PowerShell 写（平台自动识别） |
 | `cwd` | string | 否 | — | 先 `cd` 到这个目录再执行；`~` 与相对路径相对登录 home |
 | `timeoutSec` | number | 否 | `120` | 超时后关闭通道；**远端进程可能继续运行** |
 | `maxOutputBytes` | number | 否 | 配置值（`65536`） | 输出上限，**stdout / stderr 各自**截断到此值 |
@@ -190,6 +191,8 @@ npm install
 适合：探环境（`nvidia-smi`、`df -h`、`ps aux`）、装包、编译、一次性脚本。**不要**用它跑会超出一次调用的训练或长下载——用 `ssh_job`。
 
 `cwd` 的 `~`、`~/` 与相对路径都按登录 home 解析（每条连接探测一次 `$HOME` 并缓存）。这与 `ssh_upload` / `ssh_download` 的 `remotePath` 不同：后者的相对路径以 `defaultRemoteDir` 为基准，未配置时才落到登录 home。
+
+**Windows 远端**（默认 shell 是 cmd 或 PowerShell 都行）：命令在 PowerShell 里执行，输出统一为 UTF-8、中文不再乱码，退出码取自原生命令（`cmd /c exit 7` 得到 7；纯 PowerShell cmdlet 的非终止错误不改变退出码，这是 PowerShell 语义）。单条命令约 **1900 字符上限**（OpenSSH 默认 cmd shell 的 8191 命令行限制 + 包装开销）；更长的脚本请先用 `ssh_upload` 传 `.ps1`，再 `ssh_exec command="powershell -File C:\path\script.ps1"`。详见「Windows 远端」一节。
 
 ### `ssh_upload` — 上传文件或目录
 
@@ -218,7 +221,7 @@ npm install
 | 模式 | 行为 | 适合 |
 |---|---|---|
 | `local-relay`（默认，当 `preferLocalRelay=true`） | 在**运行 dsh 的机器**上流式下载到临时文件，再经 SFTP 上传到 `remotePath`，结束后清理临时文件 | 服务器外网慢 / 限速 / 被墙，或本机有代理而服务器没有；要求本机能访问该 URL，且下载期间占用本机临时磁盘 |
-| `remote-direct` | 在**服务器**上执行 `curl -fL --retry 2 --connect-timeout 30 -o <path> <url>`；没有 `curl` 时用 `wget`；两者都没有则报错并提示改用 `local-relay` | 文件大、服务器带宽好、不想占本机磁盘/带宽 |
+| `remote-direct` | 在**服务器**上执行 `curl -fL --retry 2 --connect-timeout 30 -o <path> <url>`；没有 `curl` 时用 `wget`；两者都没有则报错并提示改用 `local-relay`（Windows 远端依次尝试 `curl.exe`、`wget.exe`、PowerShell `Invoke-WebRequest`） | 文件大、服务器带宽好、不想占本机磁盘/带宽 |
 
 `mode` 不传或传 `auto` 时，用插件设置 `preferLocalRelay` 决定默认模式；返回的 `mode` 是**实际生效**的模式（不会是 `auto`）。传了枚举外的值会直接报错——当前 dsh 运行时不会在工具执行前拦截参数枚举，所以非法值若不显式拒绝就会被静默忽略。
 
@@ -264,13 +267,15 @@ ssh_fetch host="gpu" url="https://example.com/models/weights.pt" remotePath="wei
 
 | action | 作用 |
 |---|---|
-| `start` | 上传启动脚本、用 `setsid nohup` 后台启动，返回 `jobId` / `dir` / `pid` / `logFile` / `startedAt` |
+| `start` | 上传启动脚本、后台启动（POSIX：`setsid nohup`；Windows：计划任务），返回 `jobId` / `dir` / `pid` / `logFile` / `startedAt` |
 | `status` | 从远端文件判定 `running` / `exited` / `unknown`，返回 `exitCode`、`pid`、`logBytes`（不适用 / 未知时为 `-1`） |
 | `log` | 从 `offset` 起读至多 `maxBytes` 字节，返回 `chunk`、`totalBytes`、`nextOffset`、`truncated` |
-| `stop` | 向任务进程组发送 SIGTERM（`setsid` 不可用时退化为对单个 PID 发送） |
+| `stop` | POSIX：向任务进程组发送 SIGTERM（`setsid` 不可用时退化为对单个 PID 发送）；Windows：结束进程树并删除计划任务 |
 | `list` | 列出该服务器上由 dsh-ssh 启动的任务，新的在前 |
 
-任务目录在远端 `<登录 home>/.dsh-ssh/jobs/<jobId>/`（绝对路径，例如 root 用户是 `/root/.dsh-ssh/jobs/<jobId>/`），里面有 `run.sh`、`job.pid`、`job.exit`、`job.log`。状态完全靠这些文件判定，所以机器上的其他进程与它无关，也不用 `pgrep`。jobId 形如 `train-20261021153000-ab12cd`（`label` 小写后 + 时间戳 + 随机串）。
+任务目录在远端 `<登录 home>/.dsh-ssh/jobs/<jobId>/`（绝对路径，例如 root 用户是 `/root/.dsh-ssh/jobs/<jobId>/`，Windows 是 `C:\Users\<user>\.dsh-ssh\jobs\<jobId>\`），里面有 `run.sh` / `job.ps1`、`job.pid`、`job.exit`、`job.log`。状态完全靠这些文件判定，所以机器上的其他进程与它无关，也不用 `pgrep`。jobId 形如 `train-20261021153000-ab12cd`（`label` 小写后 + 时间戳 + 随机串）。
+
+**Windows 上的后台任务**：脚本通过**计划任务**启动（`Start-Process` 的子进程会随 SSH 会话被系统杀掉，计划任务不会），所以 SSH 断开后任务继续跑。注册时使用 **S4U 主体**（`-LogonType S4U`，不需要保存密码，也不要求该用户当前有交互式登录会话——这正是无头 SSH 主机的常态；早期只测过 Interactive，已修正）。任务脚本写完退出码后会**自行删除计划任务注册**（运行中的任务实例不受影响，实测如此），所以不会被轮询的已完成任务也不会留下任务注册；`stop` 会结束进程树、把 `job.exit` 记为 `143`（仅在确实杀掉进程时；任务本来就已结束则不会伪报 143）并删除计划任务，`status` / `list` 还会兜底清扫崩溃任务的注册。若任务注册成功但脚本没回 PID（例如计划任务起不来），`ssh_job start` 现在会直接报错并带上 Task Scheduler 的 state / LastTaskResult，而不是返回一个永远 `unknown` 的幻影 job。
 
 ### 输出、截断与失败
 
@@ -425,9 +430,42 @@ ssh_download host="gpu" remotePath="runs/best.pt" localPath="D:\\runs\\best.pt"
 - **降级文件后端不是强安全边界**（见上一节）：需要强隔离时用凭据服务 + 密钥认证。
 - **权限建议**：给训练机用独立账号或独立密码，按需开机；用完可以 `ssh_host action="remove"` 删掉档案（密码引用如需清理，可在凭据库里手动删除）。
 
+## Windows 远端（1.3.0）
+
+1.2.0 及以前把 POSIX 探测命令原样发给远端，于是 Windows OpenSSH（默认 shell 是 `cmd.exe`）
+会报 `'uptime' 不是内部或外部命令`，而 home 探测用的 `printf` 失败又连带 upload / download /
+fetch / job 全部不可用。1.3.0 起平台自动识别：
+
+- **探测**：先 `uname -s`，成功即 POSIX；失败则用 PowerShell 问 Windows 版本，成功即 Windows
+  （MINGW / MSYS / CYGWIN 的默认 shell 也算 Windows）。结果缓存在连接上，每条连接只探测一次。
+- **命令**：Windows 上每条命令都包进
+  `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand <base64>`：
+  输出是 UTF-8（`[Console]::OutputEncoding`），stdout / stderr 分开，退出码由包装器里的
+  nonce 标记带回（命令自己 `exit N` 时用 SSH 通道的关闭码兜底）。`Write-Host` 走上 stdout，
+  `Write-Warning` / `Write-Verbose` 走上 stderr，二者都不会再产生 CLIXML 噪音。
+- **路径**：逻辑路径统一用 Windows 写法（`C:\Users\me`），SFTP 边界转成 `/C:/Users/me`；
+  `defaultRemoteDir`、`~`、相对路径、`C:\` / `C:/` / `/C:/` 三种绝对写法都支持。
+- **任务**：`ssh_job` 用 S4U 计划任务启动（见上一节），日志用 SFTP 按字节范围读取，
+  跨多字节字符时按 UTF-8 字符边界截断，`nextOffset` 按实际消费字节推进（CJK 日志不丢字节、不漂移）。
+- **取文件**：`ssh_fetch` 的 `remote-direct` 用 `curl.exe`，没有则 `wget.exe`，再没有用
+  PowerShell `Invoke-WebRequest`。
+
+要求与边界：
+
+- 远端需要 **Windows PowerShell 5.1+**（Win10 / 11 自带，Server Core 也带）；
+- 单条命令约 **1900 字符上限**（OpenSSH 默认 cmd shell 的命令行上限 8191 + base64 包装开销）；
+- Windows 上不支持 UNC 路径（`\\server\share`），请用盘符路径；
+- S4U 任务只能访问**本地资源**（Task Scheduler 对 S4U 的固有限制）：需要访问网络共享的长任务请改在
+  命令里显式建立凭据，或改用 POSIX 远端；
+- 计划任务注册失败（例如账号策略禁止）会让 `ssh_job start` 返回可读错误；被 `stop` 的任务退出码记为 `143`；
+- 默认 shell 是 WSL 的 `bash` 时会被当成 POSIX 远端（`uname` 报 Linux），此时 shell 与 SFTP
+  看到的可能不是同一个文件系统——请改用 Windows 默认 shell，或全部使用 PowerShell 可达的盘符路径。
+
 ## 已知限制
 
-- **远端只支持 POSIX shell（Linux / macOS）**：命令按 bash/sh 写；Windows 远端（cmd / PowerShell）未验证。`ssh_job` 还依赖远端有 `bash`（`setsid` 可选，没有时退化为 `nohup`）。
+- **远端支持 POSIX（Linux / macOS）与 Windows**：POSIX 命令按 bash/sh 写，Windows 命令按 PowerShell 写（自动识别）。Windows 的边界见「Windows 远端」一节。`ssh_job` 在 POSIX 上依赖远端有 `bash`（`setsid` 可选，没有时退化为 `nohup`）。
+- **Windows 单条命令约 1900 字符上限**：更长的脚本先上传成 `.ps1`，再用 `powershell -File` 执行。
+- **Windows 后台任务依赖计划任务（S4U）**：注册被策略拒绝时 `ssh_job start` 会失败并给出 Task Scheduler 状态；被 `stop` 的任务退出码记为 `143`；S4U 任务只能访问本地资源。
 - **`ssh_exec` 超时不会杀远端进程**：超时只关闭 SSH 通道并返回 `timedOut: true`，远端命令可能继续运行。要真正停止长任务，用 `ssh_job start` + `ssh_job stop`。
 - **大目录逐文件传输慢**：SFTP 逐个文件传，几万个小文件会明显偏慢。建议先打包成归档再传，在远端用 `ssh_exec` 解包。
 - **`ssh_fetch` 的 `remote-direct` 依赖服务器上有 `curl` 或 `wget`**：两者都没有时会报错并提示改用 `local-relay`（默认模式）。
@@ -452,6 +490,9 @@ ssh_download host="gpu" remotePath="runs/best.pt" localPath="D:\\runs\\best.pt"
 | `host could not be resolved` | 主机名或 DNS 问题 |
 | `no password stored for ...` | 还没存密码：用设置页，或 `ssh_host action="password"` |
 | `status` 显示 `unknown` | 机器重启过，或任务目录被清理；日志通常仍可读 |
+| `could not determine the remote platform` | 远端 `uname` 不可用且 PowerShell 也调不动；Windows 需 Windows PowerShell 5.1+ |
+| `this command is too long for a Windows remote` | Windows 单条命令约 1900 字符上限：把脚本上传成 `.ps1`，再用 `powershell -File` 执行 |
+| Windows 上 `ssh_job start` 失败 | 错误里带 Task Scheduler 的 state / LastTaskResult：通常是没有注册计划任务的权限，或账号策略禁止 S4U |
 | 传输很慢 | 大目录先打包再传，见「已知限制」 |
 | `tool returned invalid output` | 插件自身的返回 schema 问题；请带上命令与原始输出开 issue |
 
@@ -468,7 +509,8 @@ dsh-ssh/
 │   ├── service.mjs     # 档案 + 凭据 + 连接池的统一服务层
 │   ├── profiles.mjs    # servers.json 的读取、校验与原子写入
 │   ├── secrets.mjs     # 凭据库 / 加密文件两种密码后端
-│   ├── ssh.mjs         # ssh2 封装：连接池（keepalive + 空闲回收）、exec、SFTP、JobManager
+│   ├── ssh.mjs         # ssh2 封装：连接池（keepalive + 空闲回收）、exec、SFTP、JobManager（平台感知）
+│   ├── windows.mjs     # Windows 远端：平台探测辅助、PowerShell 包装、路径转换、计划任务 job 脚本
 │   └── rpc.mjs         # 设置页的 RPC 通道（/dsh-ssh）
 ├── cordis.patch.yml    # 顶层 insert：全局挂载 + 五个配置项
 ├── locale/{zh,en}.json # 插件卡片标题与描述
@@ -485,6 +527,31 @@ dsh-ssh/
 与 `@deepseek-ai/dsh-client-ui-primitives` 的导出（`SettingsForm` / `SettingsFormModel` /
 `settingsNumberField` / `SettingsValueField` / `Switch` / `SettingsSecretField` / `Button` / `Toast`）
 均未破坏。
+
+### 1.3.0 Windows 远端回归
+
+- 离线：`node --test "test/**/*.test.mjs"` → **189/189**（149 条旧用例 + 40 条 Windows 用例：
+  平台探测、包装脚本生成/解析、Windows 路径、SFTP 路径与字节边界、JobManager Windows 分支、
+  S4U 计划任务脚本、UTF-8 分块与 1 字节窗口）。
+- 真实主机（Windows 10.0.26200 OpenSSH，默认 shell = `cmd.exe`）：
+  - 开发期 e2e（走真实工具层并逐项校验 output.schema）**20/20**：`ssh_host test`（返回
+    `platform: Windows 10.0.26200.0`）、`ssh_exec`（UTF-8 中文、退出码、stderr 分离、
+    `cwd=~` 与相对路径、长命令的可执行报错）、`ssh_upload`/`ssh_download`（`C:\` 绝对路径、
+    目录树、中文+空格文件名）、`ssh_fetch` 两种模式、`ssh_job`（start → status → log → list；
+    长任务 stop 后退出码 143、进程消失）。
+  - 发布前针对性复验（修复后代码）：`Write-Host`/`Write-Warning` 的流分流（stderr 无 CLIXML）、
+    job 的 `cmd /c exit 3` → `exitCode 3`、CJK 日志 `maxBytes=100` 分块（33 字符/99 字节 →
+    152 字节，无 U+FFFD、可逐字重建）、S4U 计划任务在 SSH 会话结束后继续运行、任务写完退出码
+    自行注销（不轮询也没有任务残留）、`stop` 后 143 且进程消失。
+  - 独立 reviewer 复验：**PASS**（首轮发现的 3 个 Major 全部关闭；POSIX 回归未发现破坏）。
+  - 独立 verifier 的 36 用例矩阵：在链路 RTT 2.7–3.6 s、SSH 握手频繁超时的退化网络上为
+    **34/36**；2 条失败均为连接类（`the SSH handshake timed out` /
+    `could not open a command channel`），同一时段手工 `ssh_exec` 可通，判为环境而非实现。
+- 沙箱真实 Loader（devkit headless，装本包 1.3.0）：插件行激活、`ssh-remote` skill 加载、
+  `ssh_host` 工具注册与真实调用、加密凭据解密全部正常（`ssh_host list` 显示「密码 已配置」）；
+  `ssh_host test` 的握手在退化链路上超时（环境；harness 用 90–120 秒连接预算复跑）。
+- 上述三轮审查修复（job 退出码、CLIXML、S4U、CJK 分块、start 往返等）见 CHANGELOG 的
+  「Fixed（发布前独立审查发现）」。
 
 ### 1.2.0 按需门控回归（真实 Loader）
 
