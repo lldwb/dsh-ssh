@@ -4,7 +4,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 
-> 当前版本 **1.1.2**（[更新日志](./CHANGELOG.md)）· 仓库 <https://github.com/lldwb/dsh-ssh>（公开，MIT）
+> 当前版本 **1.2.0**（[更新日志](./CHANGELOG.md)）· 仓库 <https://github.com/lldwb/dsh-ssh>（公开，MIT）
 
 ## 为什么需要它
 
@@ -29,6 +29,7 @@
 | **密码不进配置文件** | 服务器档案只有描述与凭据引用；密码存在 dsh 凭据库（没有该服务时降级为加密文件） |
 | **设置页** | 设置 → 插件 → SSH 服务器：服务器增删改、密码输入、测试连接、状态 |
 | **全局可用** | 插件行插在 Host 顶层，任何会话（标准 / 创造模式）都能调用 |
+| **按需加载**（1.2.0） | 六个工具默认**不进**模型工具表（每请求省下约两万字符 schema），模型加载 `ssh-remote` skill 后从下一步出现；`onDemand: false` 恢复常驻 |
 
 ## 安装
 
@@ -103,6 +104,42 @@ npm install
    ```
 
 到这里就完成了从「写脚本」到「用工具」的切换。
+
+## 按需加载：工具什么时候出现（1.2.0）
+
+**默认行为变了**：六个 `ssh_*` 工具**平时不在模型工具表里**。模型加载插件自带的
+`ssh-remote` skill 后，工具从**下一个模型步**才出现。
+
+- **为什么**：六个工具的 schema 加起来约 **两万字符**，每次请求都带；而「连另一台机器」
+  是情境型能力，多数回合根本用不到。DSH 没有插件级的常驻/按需开关，官方支持的做法就是
+  工具级 skill 门控（`tools.register(def, { when })`，官方 `dsh-tool-office` 同款）。
+- **怎么触发**：模型用 `skill` 工具加载 `ssh-remote`，或用户在输入框 `/ssh-remote`。
+  另外 resume / fork 之后，请求头里已经声明过本插件工具（说明上一段对话正在用它）也算已激活。
+- **自带技能**：`lib/skill.mjs` + `lib/skill-content.md` 通过 `ctx.skills.register()` 注册，
+  内容是一份使用说明书——`ssh_host` 先建档（密码进凭据库、不要在会话里贴）→
+  `ssh_exec` 跑单命令 / `ssh_upload` · `ssh_download` 传文件 / `ssh_job` 跑长任务，
+  以及 `ssh_fetch` 的 `local-relay` 与 `remote-direct` 该选哪个、什么时候**不该**用本工具集。
+- **想恢复常驻（1.1.x 的老行为）**：把该行 config 的 `onDemand` 设成 `false`：
+
+  ```yaml
+  - id: dsh-ssh
+    name: 'dsh-ssh'
+    config:
+      defaultHost: ''
+      maxOutputBytes: 65536
+      connectTimeoutMs: 15000
+      preferLocalRelay: true
+      onDemand: false
+  ```
+
+  然后在「设置 → 插件」里把本插件**禁用再启用**（或重启 dsh）——门控在**插件加载时**决定
+  注册方式，它不是 volatile，改值不会在下一次工具调用就生效。
+- **fail-open 边界**：该模式里 agent 看不到 `skill` 工具时（`minimal` 等）**不门控**，
+  六个工具保持常驻（判据是 `ctx.tools.get('skill', agent)`，不是宿主平面的
+  `ctx.get('skills')`——后者在 web 组合里看不到 preset 内注册的 skill 服务）。
+- **已知边界**：工具出现在「下一个模型步」而不是「同一步」，所以加载完技能的那一步很可能
+  还调不到 `ssh_*`；技能正文里已经写明这一点，不要把它当成能力缺失。PTC 模式下请求头只记
+  `run_code`，恢复/分叉后需要在会话里重新加载一次技能。
 
 ## 工具参考
 
@@ -283,7 +320,7 @@ ssh_download host="gpu" remotePath="runs/best.pt" localPath="D:\\runs\\best.pt"
 
 ## 配置项
 
-插件行在 `cordis.patch.yml` 里带四个配置项：
+插件行在 `cordis.patch.yml` 里带五个配置项：
 
 | 字段 | 默认值 | 范围 | 说明 | 生效时机 |
 |---|---|---|---|---|
@@ -291,8 +328,9 @@ ssh_download host="gpu" remotePath="runs/best.pt" localPath="D:\\runs\\best.pt"
 | `maxOutputBytes` | `65536` | 1024–1048576 | `ssh_exec` 的单流输出上限，也是 `ssh_job log` 的默认 `maxBytes` | 下一次工具调用 |
 | `connectTimeoutMs` | `15000` | 1000–120000 | 建立 SSH 连接的超时 | 下一次连接（每次连接前从配置同步到连接池） |
 | `preferLocalRelay` | `true` | — | `ssh_fetch` 不传 `mode` 时的默认模式：`true` = 本机下载后上传（`local-relay`），`false` = 服务器直接下载（`remote-direct`） | 下一次 `ssh_fetch` 调用 |
+| `onDemand` | `true` | — | 六个 `ssh_*` 工具是否按需加载：`true` = 加载 `ssh-remote` skill 后才出现，`false` = 常驻（1.1.x 行为） | **下一次插件加载**（禁用再启用 / 重启），不是下一次工具调用 |
 
-要改的话，在你自己的 profile `cordis.patch.yml` 里按行 id 定向覆盖。**注意 id 定向 patch 会整体替换 `config`，不做深合并**，所以四个字段要写全：
+要改的话，在你自己的 profile `cordis.patch.yml` 里按行 id 定向覆盖。**注意 id 定向 patch 会整体替换 `config`，不做深合并**，所以五个字段要写全：
 
 ```yaml
 - id: dsh-ssh
@@ -302,9 +340,10 @@ ssh_download host="gpu" remotePath="runs/best.pt" localPath="D:\\runs\\best.pt"
     maxOutputBytes: 131072
     connectTimeoutMs: 30000
     preferLocalRelay: true
+    onDemand: true
 ```
 
-改完在「设置 → 插件」里把本插件禁用再启用（或重启 dsh），让 Loader 重新读取 patch。四个字段都是 volatile：配置一旦读入，之后的工具调用 / 连接立即使用新值（`connectTimeoutMs` 在每次连接前同步到连接池），不需要为了改值再重载。`preferLocalRelay` 也可以在设置页的「默认行为」区直接开关。
+改完在「设置 → 插件」里把本插件禁用再启用（或重启 dsh），让 Loader 重新读取 patch。前四个字段都是 volatile：配置一旦读入，之后的工具调用 / 连接立即使用新值（`connectTimeoutMs` 在每次连接前同步到连接池），不需要为了改值再重载。`preferLocalRelay` 也可以在设置页的「默认行为」区直接开关。**`onDemand` 例外**：它决定的是「工具怎么注册」，所以只在插件加载时读一次。
 
 ## 服务器档案与密码存储
 
@@ -420,16 +459,18 @@ ssh_download host="gpu" remotePath="runs/best.pt" localPath="D:\\runs\\best.pt"
 
 ```text
 dsh-ssh/
-├── index.js            # Host 半：Config、工具注册、设置页策略、RPC 接线
+├── index.js            # Host 半：Config、按需门控、工具注册、设置页策略、RPC 接线
 ├── client.js           # Client 半：设置页（浏览器端）
 ├── lib/
 │   ├── tools.mjs       # 六个工具定义（严格 JSON Schema，含返回值校验）
+│   ├── skill.mjs       # `ssh-remote` 运行时 skill（说明书 + 门控的触发点）
+│   ├── skill-content.md # skill 正文（模型加载后才看到的 markdown）
 │   ├── service.mjs     # 档案 + 凭据 + 连接池的统一服务层
 │   ├── profiles.mjs    # servers.json 的读取、校验与原子写入
 │   ├── secrets.mjs     # 凭据库 / 加密文件两种密码后端
 │   ├── ssh.mjs         # ssh2 封装：连接池（keepalive + 空闲回收）、exec、SFTP、JobManager
 │   └── rpc.mjs         # 设置页的 RPC 通道（/dsh-ssh）
-├── cordis.patch.yml    # 顶层 insert：全局挂载 + 四个配置项
+├── cordis.patch.yml    # 顶层 insert：全局挂载 + 五个配置项
 ├── locale/{zh,en}.json # 插件卡片标题与描述
 ├── icon.svg
 ├── README.md
@@ -444,6 +485,25 @@ dsh-ssh/
 与 `@deepseek-ai/dsh-client-ui-primitives` 的导出（`SettingsForm` / `SettingsFormModel` /
 `settingsNumberField` / `SettingsValueField` / `Switch` / `SettingsSecretField` / `Button` / `Toast`）
 均未破坏。
+
+### 1.2.0 按需门控回归（真实 Loader）
+
+沙箱：devkit headless `ondemand-dsh-ssh`（`template: headless`，装本包 1.2.0，权限
+`danger-full-access`），一次任务里依次做三步，贴原始输出：
+
+| 步 | 动作 | 原始结果 |
+|---|---|---|
+| 1 | **不加载技能**，直接调 `ssh_host {"action":"list"}` | `Error: unknown tool "ssh_host"`（工具不在模型工具表里） |
+| 2 | `skill {"name":"ssh-remote"}` | 返回以 `<skill_content name="ssh-remote">` 开头；前 200 字符的截断点落在标题行 `# SSH 远程操作` 的 `# SSH` 处（wrapper 前缀 195 字符 + 正文前 5 字符） |
+| 3 | 再调 `ssh_host {"action":"list"}` | 真实执行并返回：「还没有保存任何服务器。用 `ssh_host action="add" name="…" host="…" user="…" password="…"` 添加，或从「设置 → 插件 → SSH 服务器」页面添加。」 |
+
+判定：第 1 步 `unknown tool` ⇒ 门控生效；第 3 步真实返回（不是 unknown tool）⇒ skill 加载后
+注册重新可见。离线门控细节由 `test/on-demand.test.mjs` 的 12 条用例覆盖。
+
+> 备注：同一次回归的第一版任务里，模型因为「工具本来就不在函数表里」而拒绝发起调用、只回报
+> 「没有这个工具」，没有给出 `unknown tool` 字符串。因此重跑时明确要求它即使不在函数表也要发出
+> 一次 `name="ssh_host"` 的调用，才拿到上面这条 harness 原文。**两条记录都说明同一件事：加载技能
+> 前 `ssh_host` 不在工具表里**；区别只是模型会不会去撞那一下。
 
 ### DSH 0.2.2-rc.2 回归（1.1.8）
 

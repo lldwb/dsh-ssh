@@ -4,6 +4,37 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.2.0] - 2026-11-24
+
+### Changed
+
+- **行为变化：六个 `ssh_*` 工具改为「按需加载」（skill 门控）**。工具默认**不进**模型工具表
+  （每请求省下约两万字符 schema），模型加载本插件自带的 `ssh-remote` skill 后从**下一个模型步**
+  出现。三个来源都算已激活：模型用 `skill` 工具加载、用户 `/ssh-remote` 斜杠调用、resume/fork
+  后请求头里已声明过本插件工具（内存标记会丢，靠这个兜底）。
+  - 新增 `lib/skill.mjs` + `lib/skill-content.md`：运行时 skill（`ctx.skills.register`）。正文是
+    使用说明书——`ssh_host` 先建档（密码走凭据库、不要在会话里贴）→ `ssh_exec` 跑单命令 /
+    `ssh_upload` · `ssh_download` 传文件 / `ssh_job` 跑长任务（start/status/log/stop），以及
+    `ssh_fetch` 的 `local-relay` 与 `remote-direct` 怎么选、什么时候**不该**用本工具集；正文里
+    写明「工具是按需的，加载本技能后从下一步出现」。
+  - `index.js` 新增 `createToolGate()`，六个工具按 `{ when }` 注册。**fail-open 判据是
+    `ctx.tools.get('skill', agent)`**——不是 `ctx.get('skills')`：web 组合里 skills 服务在 preset
+    scope，宿主平面看不到它，用它判会永远 fail-open（等于没门控）。
+  - 新增配置项 `onDemand`（`z.boolean().default(true)`，**非 volatile**）：设 `false` 恢复 1.1.x
+    的常驻行为。它决定的是「工具怎么注册」，所以只在**插件加载时**读一次——改完要禁用再启用
+    本插件（或重启 dsh），不是下一次工具调用就生效。`cordis.patch.yml` 已加该字段与注释
+    （id 定向 patch 会整体替换 config，五个字段要写全）。
+  - 没有 `skill` 工具的模式（`minimal` 等）自动 fail-open，工具保持常驻。
+- 新增 `test/on-demand.test.mjs`（12 条）：默认门控 / 加载后放行 / 别的 skill 不放行 /
+  失败调用不放行 / 斜杠调用 / resume 兜底 / 请求头抛错 / `agent` 未定义 / fail-open /
+  `onDemand:false` / `Config` 默认值 / skill 定义与正文校验。
+- `node --test "test/**/*.test.mjs"` → **149/149 通过**（原 137 条全部保留为绿 + 新增 12 条）。
+- **沙箱真实 Loader 回归**（devkit headless 沙箱 `ondemand-dsh-ssh`，装本包 1.2.0）：
+  ① 加载技能前调 `ssh_host` → `Error: unknown tool "ssh_host"`；
+  ② `skill {"name":"ssh-remote"}` → 返回以 `<skill_content name="ssh-remote">` 开头；
+  ③ 再调 `ssh_host {"action":"list"}` → 真实执行并返回「还没有保存任何服务器。…」。
+- 同步 `BUILD` 构建戳；README 新增「按需加载」小节与 `onDemand` 配置说明。
+
 ## [1.1.10] - 2026-11-19
 
 ### Changed

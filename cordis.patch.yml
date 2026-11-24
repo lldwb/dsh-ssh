@@ -5,6 +5,8 @@
 #
 # 行 id 同时是设置页命名空间（settings-page skill §4.2）：改这里必须同步改
 # index.js 的 SETTINGS_NAMESPACE 与 client.js 的 SETTINGS_NS。
+#
+# 注意：id 定向 patch 会**整体替换** config、不做深合并，要覆盖就写全 5 个字段。
 - insert:
     - id: dsh-ssh
       name: 'dsh-ssh'
@@ -17,3 +19,10 @@
         connectTimeoutMs: 15000
         # ssh_fetch 默认怎么取文件：true = 本机下载后 SFTP 上传；false = 服务器自己 curl/wget。
         preferLocalRelay: true
+        # 按需门控（1.2.0 起默认开）：6 个 ssh_* 工具平时**不进**模型工具表（每请求省下
+        #   约两万字符 schema），模型加载本插件自带的 `ssh-remote` skill 后从**下一步**出现。
+        #   设 false = 恢复常驻（工具永远可见，1.1.x 的老行为）。
+        #   该开关在**插件加载时**决定注册方式，改完要禁用再启用本插件（或重启 dsh）——
+        #   它不是 volatile，改值不会在下一次工具调用就生效。
+        #   没有 `skill` 工具的模式（minimal 等）自动 fail-open，保持常驻。
+        onDemand: true
