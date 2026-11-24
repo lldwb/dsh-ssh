@@ -40,6 +40,27 @@ ssh_host { action: "test", name: "gpu" }                      # 连一下，返�
 `ssh_exec` 会**等命令结束**并把输出带回来（`timeoutSec` 默认 120），拿它跑训练只会被超时掐断，
 还拿不到中间日志。
 
+## 1.5 Windows 远端（自动识别，命令按 PowerShell 写）
+
+平台由插件自动探测（`uname -s` 成功 = POSIX；否则用 PowerShell 探测 = Windows），不需要配置。
+**Windows 远端的 `ssh_exec` / `ssh_job` 命令要按 PowerShell 写，不是 bash/cmd**；输出统一为
+UTF-8（中文不再乱码），退出码取自原生命令（`cmd /c exit 7` 会得到 7；纯 PowerShell cmdlet 的
+非终止错误不改变退出码，这是 PowerShell 语义）。
+
+- 路径：`C:\Users\me\a.txt`、`/C:/Users/me/a.txt`、`~`、相对路径（相对 `defaultRemoteDir`，
+  未配置则相对登录 home）都可用；UNC（`\\server\share`）不支持。
+- `ssh_host action="test"` 在 Windows 上返回 `platform: "Windows 10.0.xxxxx"` 与运行时长。
+- **单条命令有长度上限（约 1900 字符）**：OpenSSH 默认 cmd shell 的命令行上限 ~8191，包装后
+  更短。长脚本先 `ssh_upload` 传 `.ps1`，再
+  `ssh_exec command="powershell -File C:\path\script.ps1"`。
+- `ssh_job` 在 Windows 上通过 **S4U 计划任务**启动（不需要保存密码、也不要求交互式登录会话，
+  SSH 断开后继续跑），任务结束会自行删除注册；`stop` 结束进程树并删除计划任务，只有真的杀掉
+  进程时才把 `exitCode` 记为 `143`。任务注册成功但启动失败时 `ssh_job start` 会直接报错并带上
+  Task Scheduler 状态，不会返回幻影 job。S4U 任务只能访问本地资源。
+- `ssh_fetch mode="remote-direct"` 在 Windows 上依次尝试 `curl.exe`、`wget.exe`、
+  PowerShell `Invoke-WebRequest`。
+- 需要 Windows PowerShell 5.1+（Win10/11 自带）。
+
 ## 2. `ssh_exec`：单条命令
 
 ```text
@@ -81,7 +102,8 @@ ssh_job { action: "stop",   host: "gpu", jobId: "..." }
 ssh_job { action: "list",   host: "gpu" }
 ```
 
-- `start` 用 `setsid nohup`，**调用立即返回**；工具调用之间不需要保持连接，断线不影响任务。
+- `start` 在 POSIX 用 `setsid nohup`、在 Windows 用计划任务，**调用立即返回**；工具调用之间
+  不需要保持连接，断线不影响任务。
 - 轮询用 `status` + `log`。`log` 返回 `nextOffset`，下次把它传回 `offset` 就只读**新增部分**，
   不会重复下载整份日志；`truncated: true` 表示这次没读完，继续用 `nextOffset` 读下一段。
 - 状态只靠远端任务文件（`job.pid` / `job.exit` / `job.log`）判定：`running` / `exited` /
@@ -111,6 +133,8 @@ ssh_download { host: "gpu", remotePath: "/root/autodl-tmp/out", localPath: "E:/o
 |---|---|
 | `no password stored for ...` | 让用户在设置页存密码，或用 `ssh_host action="password"` |
 | 连接超时 / refused / 认证失败 | `ssh_host { action: "test", name }`；核对 `host`/`port`/`user`/`auth` |
+| `could not determine the remote platform` | 远端既没有可用的 `uname`，PowerShell 也调不动；确认 Windows 上有 PowerShell 5.1+ |
+| `too long for a Windows remote` | Windows 单条命令约 1900 字符上限：把脚本上传成 `.ps1`，再用 `powershell -File` 执行 |
 | `host is required` | 没有 `defaultHost` 且不止一台：显式传 `host` |
 | 输出被截断 | 缩窄命令（`head`/`grep`），或调大 `maxOutputBytes`；**不要反复重跑** |
 | `tool returned invalid output` | 插件返回 schema 问题：带上命令与原始输出开 issue |

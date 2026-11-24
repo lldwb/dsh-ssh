@@ -60,6 +60,8 @@ function homeClient(home = '/root') {
   const calls = [];
   return {
     calls,
+    // Same reason as cachedHomeClient: keep the POSIX branch without a probe.
+    __dshSshPlatform: { kind: 'posix', family: 'Linux' },
     exec(command, optionsOrCallback, maybeCallback) {
       const callback = typeof optionsOrCallback === 'function' ? optionsOrCallback : maybeCallback;
       calls.push(command);
@@ -70,7 +72,9 @@ function homeClient(home = '/root') {
 
 /** A client whose remote home is already cached, so no exec probe runs. */
 function cachedHomeClient(home = '/root') {
-  return { __dshSshHome: home };
+  // The job manager asks for the platform before it branches; a cached POSIX
+  // platform keeps these tests on the POSIX path without scripting `uname -s`.
+  return { __dshSshHome: home, __dshSshPlatform: { kind: 'posix', family: 'Linux' } };
 }
 
 // ───────────────────────────────── shellQuote ─────────────────────────────────
@@ -221,6 +225,8 @@ test('resolveHome rejects an empty, relative or failed answer', async () => {
   const relative = homeClient('not-absolute');
   await assert.rejects(() => resolveHome(relative), /could not resolve the remote home/);
   const failing = {
+    // Seeded so the test exercises the home probe, not platform detection.
+    __dshSshPlatform: { kind: 'posix', family: 'Linux' },
     exec(command, optionsOrCallback, maybeCallback) {
       const callback = typeof optionsOrCallback === 'function' ? optionsOrCallback : maybeCallback;
       callback(null, commandStream('', { code: 1, stderr: 'permission denied' }));

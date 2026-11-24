@@ -71,6 +71,9 @@ export function fakeClient(streamOptions = {}, sftpSession) {
   const resolveOptions = typeof streamOptions === 'function' ? streamOptions : () => streamOptions;
   return {
     __dshSshHome: '/root',
+    // Platform detection is cached per connection; seeding it keeps these fakes
+    // from having to script the `uname -s` probe.
+    __dshSshPlatform: { kind: 'posix', family: 'Linux' },
     exec(command, optionsOrCallback, maybeCallback) {
       const callback = typeof optionsOrCallback === 'function' ? optionsOrCallback : maybeCallback;
       callback(null, fakeStream(resolveOptions(command)));
