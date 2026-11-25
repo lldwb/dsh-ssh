@@ -6,6 +6,13 @@
 
 > 当前版本 **1.3.0**（[更新日志](./CHANGELOG.md)）· 仓库 <https://github.com/lldwb/dsh-ssh>（公开，MIT）
 
+## 加载方式
+
+加载方式：按需（skill: `ssh-remote`；入口：`skill` 工具 / `/ssh-remote`；关闭：该行 config 设 `onDemand: false`）
+
+> 加载方式是 DSH 插件开发的**必答项**（工作区约定 §10.0）：按需的必须有 skill 入口与
+> `onDemand: false` 退路，常驻的必须写理由。这条标记行供人工审阅与将来做门禁。
+
 ## 为什么需要它
 
 租一台 GPU 服务器（AutoDL 之类的按小时计费实例）跑训练，过去在 agent 会话里是这样工作的：

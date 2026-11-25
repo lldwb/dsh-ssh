@@ -4,6 +4,18 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## 1.3.1 — 2026-11-25
+
+### 文档：README 补「加载方式」标记（devkit 约定 §10.0）
+
+纯文档改动，无行为变化：README 顶部新增「加载方式」一节，写明 按需（skill 门控）；
+并补上 skill 入口与 `onDemand: false` 退路（或常驻理由）。标记行原文：
+
+```text
+加载方式：按需（skill: `ssh-remote`；入口：`skill` 工具 / `/ssh-remote`；关闭：该行 config 设 `onDemand: false`）
+```
+
+
 ## [1.3.0] - 2026-11-24
 
 ### Added
