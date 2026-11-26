@@ -1,21 +1,20 @@
 # dsh-ssh
 
-> 在 [DeepSeek Harness（dsh）](https://github.com/deepseek-ai/deepseek-harness) 里直接连 SSH 服务器：执行命令、上传下载文件、跑后台长任务并读取日志——不再为每一次连接临时写一个 Python(paramiko) 脚本。
+在 [DeepSeek Harness（dsh）](https://github.com/deepseek-ai/deepseek-harness) 里直接连 SSH 服务器：执行命令、上传下载文件、从 URL 取文件到服务器、跑后台长任务并读取日志。把过去「每连一次就临时写一个 Python(paramiko) 脚本」的流程换成一次工具调用——服务器档案存一次、密码存一次，之后在一条会话里就能走完「探环境 → 传数据 → 起训练 → 轮询日志 → 取回权重」。
+
+给谁用：需要在远程机器（Linux / macOS / Windows）上干活的人——租 GPU 训练机、跑评测、部署服务、在大盘上处理数据。工具挂在 Host 顶层而不是某个 agent preset 里，所以标准模式与创造模式都能用。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
-
-> 当前版本 **1.3.0**（[更新日志](./CHANGELOG.md)）· 仓库 <https://github.com/lldwb/dsh-ssh>（公开，MIT）
 
 ## 加载方式
 
 加载方式：按需（skill: `ssh-remote`；入口：`skill` 工具 / `/ssh-remote`；关闭：该行 config 设 `onDemand: false`）
 
-> 加载方式是 DSH 插件开发的**必答项**（工作区约定 §10.0）：按需的必须有 skill 入口与
-> `onDemand: false` 退路，常驻的必须写理由。这条标记行供人工审阅与将来做门禁。
+六个 `ssh_*` 工具默认不进模型工具表，模型加载 `ssh-remote` skill 后从下一个模型步出现；`onDemand: false` 恢复常驻。原因与细节见「按需加载」一节。
 
 ## 为什么需要它
 
-租一台 GPU 服务器（AutoDL 之类的按小时计费实例）跑训练，过去在 agent 会话里是这样工作的：
+租一台按小时计费的 GPU 服务器跑训练，过去在 agent 会话里是这样工作的：
 
 1. 写一个 `connect.py`：`paramiko.SSHClient()`、自动接受 host key、把密码塞进脚本或命令行；
 2. 再写一个 `upload.py` 传数据集；
@@ -24,7 +23,7 @@
 
 每一步都是一个临时文件，每个文件里都要重复一遍连接与认证，密码还经常出现在命令行里。机器换了、密码改了，这些脚本全部作废重写。
 
-`dsh-ssh` 把上面每一步换成**一次工具调用**：服务器信息存一次（`ssh_host`），密码存一次（凭据库，不落进服务器档案），之后在一条会话里就能走完「探环境 → 传数据 → 起训练 → 轮询日志 → 取回权重」。工具挂在 Host 顶层而不是某个 agent preset 里，所以标准模式与创造模式都能用。
+`dsh-ssh` 把上面每一步换成**一次工具调用**：服务器信息存一次（`ssh_host`），密码存一次（凭据库，不落进服务器档案），之后就能在会话里完成整条链路。
 
 ## 特性
 
@@ -33,11 +32,11 @@
 | **六个工具** | `ssh_host`（服务器档案）、`ssh_exec`（执行命令）、`ssh_upload` / `ssh_download`（SFTP 文件与目录）、`ssh_fetch`（从 URL 取文件到服务器）、`ssh_job`（后台长任务） |
 | **连接复用** | 每台服务器复用一条 SSH 连接（keepalive 10 秒），一次会话里几十次调用只付一次握手成本；服务器档案变化或连接断开时自动重连；每条连接最长保持 5 分钟，到期自动回收（`unref`，不挂住进程），下次调用透明重连 |
 | **后台长任务** | `setsid nohup` 启动（Windows 上改用计划任务），日志写在远端自己的文件里，按字节偏移增量读取——工具调用之间不需要保持连接，断线也不影响训练 |
-| **Windows 远端**（1.3.0） | 自动识别远端平台；Windows 上的命令走 PowerShell（UTF-8 输出、真实退出码），上传 / 下载 / 取文件 / 后台任务全部可用，`ssh_host test` 不再把 Windows 误报成连接失败 |
+| **Windows 远端** | 自动识别远端平台；Windows 上的命令走 PowerShell（UTF-8 输出、真实退出码），上传 / 下载 / 取文件 / 后台任务全部可用，`ssh_host test` 不会把 Windows 误报成连接失败。边界见「Windows 远端」一节 |
 | **密码不进配置文件** | 服务器档案只有描述与凭据引用；密码存在 dsh 凭据库（没有该服务时降级为加密文件） |
 | **设置页** | 设置 → 插件 → SSH 服务器：服务器增删改、密码输入、测试连接、状态 |
 | **全局可用** | 插件行插在 Host 顶层，任何会话（标准 / 创造模式）都能调用 |
-| **按需加载**（1.2.0） | 六个工具默认**不进**模型工具表（每请求省下约两万字符 schema），模型加载 `ssh-remote` skill 后从下一步出现；`onDemand: false` 恢复常驻 |
+| **按需加载** | 六个工具默认不进模型工具表（每请求省下约两万字符 schema），模型加载 `ssh-remote` skill 后从下一步出现；`onDemand: false` 恢复常驻 |
 
 ## 安装
 
@@ -113,21 +112,14 @@ npm install
 
 到这里就完成了从「写脚本」到「用工具」的切换。
 
-## 按需加载：工具什么时候出现（1.2.0）
+## 按需加载：工具什么时候出现
 
-**默认行为变了**：六个 `ssh_*` 工具**平时不在模型工具表里**。模型加载插件自带的
-`ssh-remote` skill 后，工具从**下一个模型步**才出现。
+六个 `ssh_*` 工具**平时不在模型工具表里**。模型加载插件自带的 `ssh-remote` skill 后，工具从**下一个模型步**才出现。
 
-- **为什么**：六个工具的 schema 加起来约 **两万字符**，每次请求都带；而「连另一台机器」
-  是情境型能力，多数回合根本用不到。DSH 没有插件级的常驻/按需开关，官方支持的做法就是
-  工具级 skill 门控（`tools.register(def, { when })`，官方 `dsh-tool-office` 同款）。
-- **怎么触发**：模型用 `skill` 工具加载 `ssh-remote`，或用户在输入框 `/ssh-remote`。
-  另外 resume / fork 之后，请求头里已经声明过本插件工具（说明上一段对话正在用它）也算已激活。
-- **自带技能**：`lib/skill.mjs` + `lib/skill-content.md` 通过 `ctx.skills.register()` 注册，
-  内容是一份使用说明书——`ssh_host` 先建档（密码进凭据库、不要在会话里贴）→
-  `ssh_exec` 跑单命令 / `ssh_upload` · `ssh_download` 传文件 / `ssh_job` 跑长任务，
-  以及 `ssh_fetch` 的 `local-relay` 与 `remote-direct` 该选哪个、什么时候**不该**用本工具集。
-- **想恢复常驻（1.1.x 的老行为）**：把该行 config 的 `onDemand` 设成 `false`：
+- **为什么**：六个工具的 schema 加起来约 **两万字符**，每次请求都带；而「连另一台机器」是情境型能力，多数回合根本用不到。DSH 没有插件级的常驻/按需开关，官方支持的做法就是工具级 skill 门控（`tools.register(def, { when })`，官方 `dsh-tool-office` 同款）。
+- **怎么触发**：模型用 `skill` 工具加载 `ssh-remote`，或用户在输入框 `/ssh-remote`。另外 resume / fork 之后，请求头里已经声明过本插件工具（说明上一段对话正在用它）也算已激活。
+- **自带技能**：`lib/skill.mjs` + `lib/skill-content.md` 通过 `ctx.skills.register()` 注册，内容是一份使用说明书——`ssh_host` 先建档（密码进凭据库、不要在会话里贴）→ `ssh_exec` 跑单命令 / `ssh_upload` · `ssh_download` 传文件 / `ssh_job` 跑长任务，以及 `ssh_fetch` 的 `local-relay` 与 `remote-direct` 该选哪个、什么时候**不该**用本工具集。
+- **想恢复常驻**：把该行 config 的 `onDemand` 设成 `false`：
 
   ```yaml
   - id: dsh-ssh
@@ -140,14 +132,9 @@ npm install
       onDemand: false
   ```
 
-  然后在「设置 → 插件」里把本插件**禁用再启用**（或重启 dsh）——门控在**插件加载时**决定
-  注册方式，它不是 volatile，改值不会在下一次工具调用就生效。
-- **fail-open 边界**：该模式里 agent 看不到 `skill` 工具时（`minimal` 等）**不门控**，
-  六个工具保持常驻（判据是 `ctx.tools.get('skill', agent)`，不是宿主平面的
-  `ctx.get('skills')`——后者在 web 组合里看不到 preset 内注册的 skill 服务）。
-- **已知边界**：工具出现在「下一个模型步」而不是「同一步」，所以加载完技能的那一步很可能
-  还调不到 `ssh_*`；技能正文里已经写明这一点，不要把它当成能力缺失。PTC 模式下请求头只记
-  `run_code`，恢复/分叉后需要在会话里重新加载一次技能。
+  然后在「设置 → 插件」里把本插件**禁用再启用**（或重启 dsh）——门控在**插件加载时**决定注册方式，它不是 volatile，改值不会在下一次工具调用就生效。
+- **fail-open 边界**：该模式里 agent 看不到 `skill` 工具时（`minimal` 等）**不门控**，六个工具保持常驻（判据是 `ctx.tools.get('skill', agent)`，不是宿主平面的 `ctx.get('skills')`——后者在 web 组合里看不到 preset 内注册的 skill 服务）。
+- **已知边界**：工具出现在「下一个模型步」而不是「同一步」，所以加载完技能的那一步很可能还调不到 `ssh_*`；技能正文里已经写明这一点，不要把它当成能力缺失。PTC 模式下请求头只记 `run_code`，恢复/分叉后需要在会话里重新加载一次技能。
 
 ## 工具参考
 
@@ -282,7 +269,7 @@ ssh_fetch host="gpu" url="https://example.com/models/weights.pt" remotePath="wei
 
 任务目录在远端 `<登录 home>/.dsh-ssh/jobs/<jobId>/`（绝对路径，例如 root 用户是 `/root/.dsh-ssh/jobs/<jobId>/`，Windows 是 `C:\Users\<user>\.dsh-ssh\jobs\<jobId>\`），里面有 `run.sh` / `job.ps1`、`job.pid`、`job.exit`、`job.log`。状态完全靠这些文件判定，所以机器上的其他进程与它无关，也不用 `pgrep`。jobId 形如 `train-20261021153000-ab12cd`（`label` 小写后 + 时间戳 + 随机串）。
 
-**Windows 上的后台任务**：脚本通过**计划任务**启动（`Start-Process` 的子进程会随 SSH 会话被系统杀掉，计划任务不会），所以 SSH 断开后任务继续跑。注册时使用 **S4U 主体**（`-LogonType S4U`，不需要保存密码，也不要求该用户当前有交互式登录会话——这正是无头 SSH 主机的常态；早期只测过 Interactive，已修正）。任务脚本写完退出码后会**自行删除计划任务注册**（运行中的任务实例不受影响，实测如此），所以不会被轮询的已完成任务也不会留下任务注册；`stop` 会结束进程树、把 `job.exit` 记为 `143`（仅在确实杀掉进程时；任务本来就已结束则不会伪报 143）并删除计划任务，`status` / `list` 还会兜底清扫崩溃任务的注册。若任务注册成功但脚本没回 PID（例如计划任务起不来），`ssh_job start` 现在会直接报错并带上 Task Scheduler 的 state / LastTaskResult，而不是返回一个永远 `unknown` 的幻影 job。
+**Windows 上的后台任务**：脚本通过**计划任务**启动（`Start-Process` 的子进程会随 SSH 会话被系统杀掉，计划任务不会），所以 SSH 断开后任务继续跑。注册时使用 **S4U 主体**（`-LogonType S4U`，不需要保存密码，也不要求该用户当前有交互式登录会话——这正是无头 SSH 主机的常态）。任务脚本写完退出码后会**自行删除计划任务注册**（运行中的任务实例不受影响），所以不会被轮询的已完成任务也不会留下任务注册；`stop` 会结束进程树、把 `job.exit` 记为 `143`（仅在确实杀掉进程时；任务本来就已结束则不会伪报 143）并删除计划任务，`status` / `list` 还会兜底清扫崩溃任务的注册。若任务注册成功但脚本没回 PID（例如计划任务起不来），`ssh_job start` 会直接报错并带上 Task Scheduler 的 state / LastTaskResult，而不是返回一个永远 `unknown` 的幻影 job。
 
 ### 输出、截断与失败
 
@@ -340,7 +327,7 @@ ssh_download host="gpu" remotePath="runs/best.pt" localPath="D:\\runs\\best.pt"
 | `maxOutputBytes` | `65536` | 1024–1048576 | `ssh_exec` 的单流输出上限，也是 `ssh_job log` 的默认 `maxBytes` | 下一次工具调用 |
 | `connectTimeoutMs` | `15000` | 1000–120000 | 建立 SSH 连接的超时 | 下一次连接（每次连接前从配置同步到连接池） |
 | `preferLocalRelay` | `true` | — | `ssh_fetch` 不传 `mode` 时的默认模式：`true` = 本机下载后上传（`local-relay`），`false` = 服务器直接下载（`remote-direct`） | 下一次 `ssh_fetch` 调用 |
-| `onDemand` | `true` | — | 六个 `ssh_*` 工具是否按需加载：`true` = 加载 `ssh-remote` skill 后才出现，`false` = 常驻（1.1.x 行为） | **下一次插件加载**（禁用再启用 / 重启），不是下一次工具调用 |
+| `onDemand` | `true` | — | 六个 `ssh_*` 工具是否按需加载：`true` = 加载 `ssh-remote` skill 后才出现，`false` = 常驻 | **下一次插件加载**（禁用再启用 / 重启），不是下一次工具调用 |
 
 要改的话，在你自己的 profile `cordis.patch.yml` 里按行 id 定向覆盖。**注意 id 定向 patch 会整体替换 `config`，不做深合并**，所以五个字段要写全：
 
@@ -380,8 +367,8 @@ ssh_download host="gpu" remotePath="runs/best.pt" localPath="D:\\runs\\best.pt"
       "auth": "password",
       "note": "AutoDL GPU 训练机",
       "defaultRemoteDir": "/root/autodl-tmp",
-      "createdAt": "2026-10-21T07:30:00.000Z",
-      "updatedAt": "2026-10-21T07:30:00.000Z",
+      "createdAt": "<创建时间 ISO 8601>",
+      "updatedAt": "<最后修改时间 ISO 8601>",
       "passwordRef": "DSH_SSH_GPU_PASSWORD"
     }
   }
@@ -437,14 +424,11 @@ ssh_download host="gpu" remotePath="runs/best.pt" localPath="D:\\runs\\best.pt"
 - **降级文件后端不是强安全边界**（见上一节）：需要强隔离时用凭据服务 + 密钥认证。
 - **权限建议**：给训练机用独立账号或独立密码，按需开机；用完可以 `ssh_host action="remove"` 删掉档案（密码引用如需清理，可在凭据库里手动删除）。
 
-## Windows 远端（1.3.0）
+## Windows 远端
 
-1.2.0 及以前把 POSIX 探测命令原样发给远端，于是 Windows OpenSSH（默认 shell 是 `cmd.exe`）
-会报 `'uptime' 不是内部或外部命令`，而 home 探测用的 `printf` 失败又连带 upload / download /
-fetch / job 全部不可用。1.3.0 起平台自动识别：
+Windows 上的 OpenSSH 默认 shell 是 `cmd.exe`，不能直接执行 POSIX 命令。插件按远端平台自动切换命令包装、路径与后台任务机制，不需要手工配置：
 
-- **探测**：先 `uname -s`，成功即 POSIX；失败则用 PowerShell 问 Windows 版本，成功即 Windows
-  （MINGW / MSYS / CYGWIN 的默认 shell 也算 Windows）。结果缓存在连接上，每条连接只探测一次。
+- **探测**：先 `uname -s`，成功即 POSIX；失败则用 PowerShell 问 Windows 版本，成功即 Windows（MINGW / MSYS / CYGWIN 的默认 shell 也算 Windows）。结果缓存在连接上，每条连接只探测一次。
 - **命令**：Windows 上每条命令都包进
   `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand <base64>`：
   输出是 UTF-8（`[Console]::OutputEncoding`），stdout / stderr 分开，退出码由包装器里的
@@ -452,7 +436,7 @@ fetch / job 全部不可用。1.3.0 起平台自动识别：
   `Write-Warning` / `Write-Verbose` 走上 stderr，二者都不会再产生 CLIXML 噪音。
 - **路径**：逻辑路径统一用 Windows 写法（`C:\Users\me`），SFTP 边界转成 `/C:/Users/me`；
   `defaultRemoteDir`、`~`、相对路径、`C:\` / `C:/` / `/C:/` 三种绝对写法都支持。
-- **任务**：`ssh_job` 用 S4U 计划任务启动（见上一节），日志用 SFTP 按字节范围读取，
+- **任务**：`ssh_job` 用 S4U 计划任务启动（见「`ssh_job`」一节），日志用 SFTP 按字节范围读取，
   跨多字节字符时按 UTF-8 字符边界截断，`nextOffset` 按实际消费字节推进（CJK 日志不丢字节、不漂移）。
 - **取文件**：`ssh_fetch` 的 `remote-direct` 用 `curl.exe`，没有则 `wget.exe`，再没有用
   PowerShell `Invoke-WebRequest`。
@@ -526,92 +510,14 @@ dsh-ssh/
 └── CHANGELOG.md
 ```
 
-## 兼容性与回归记录（DSH 0.2.2-rc.1 / rc.2）
+## 开发与测试
 
-适配目标：已安装的 **DSH 0.2.2-rc.2**（上一轮是 rc.1）。本插件在两代 rc 下**均无需改代码**——
-用到的 `ctx.tools` / `ctx.credentials` / `ctx.connection.rpc.handle` / `ctx.webServer`、
-`Config` 的 `.volatile()`、`ctx.inject(['settings'])` + `settings.configure({ auto: false }, fiber)`
-与 `@deepseek-ai/dsh-client-ui-primitives` 的导出（`SettingsForm` / `SettingsFormModel` /
-`settingsNumberField` / `SettingsValueField` / `Switch` / `SettingsSecretField` / `Button` / `Toast`）
-均未破坏。
+```bash
+npm install          # 装 ssh2 与 schemastery
+npm test             # node --test "test/**/*.test.mjs"
+```
 
-### 1.3.0 Windows 远端回归
-
-- 离线：`node --test "test/**/*.test.mjs"` → **189/189**（149 条旧用例 + 40 条 Windows 用例：
-  平台探测、包装脚本生成/解析、Windows 路径、SFTP 路径与字节边界、JobManager Windows 分支、
-  S4U 计划任务脚本、UTF-8 分块与 1 字节窗口）。
-- 真实主机（Windows 10.0.26200 OpenSSH，默认 shell = `cmd.exe`）：
-  - 开发期 e2e（走真实工具层并逐项校验 output.schema）**20/20**：`ssh_host test`（返回
-    `platform: Windows 10.0.26200.0`）、`ssh_exec`（UTF-8 中文、退出码、stderr 分离、
-    `cwd=~` 与相对路径、长命令的可执行报错）、`ssh_upload`/`ssh_download`（`C:\` 绝对路径、
-    目录树、中文+空格文件名）、`ssh_fetch` 两种模式、`ssh_job`（start → status → log → list；
-    长任务 stop 后退出码 143、进程消失）。
-  - 发布前针对性复验（修复后代码）：`Write-Host`/`Write-Warning` 的流分流（stderr 无 CLIXML）、
-    job 的 `cmd /c exit 3` → `exitCode 3`、CJK 日志 `maxBytes=100` 分块（33 字符/99 字节 →
-    152 字节，无 U+FFFD、可逐字重建）、S4U 计划任务在 SSH 会话结束后继续运行、任务写完退出码
-    自行注销（不轮询也没有任务残留）、`stop` 后 143 且进程消失。
-  - 独立 reviewer 复验：**PASS**（首轮发现的 3 个 Major 全部关闭；POSIX 回归未发现破坏）。
-  - 独立 verifier 的 36 用例矩阵：在链路 RTT 2.7–3.6 s、SSH 握手频繁超时的退化网络上为
-    **34/36**；2 条失败均为连接类（`the SSH handshake timed out` /
-    `could not open a command channel`），同一时段手工 `ssh_exec` 可通，判为环境而非实现。
-- 沙箱真实 Loader（devkit headless，装本包 1.3.0）：插件行激活、`ssh-remote` skill 加载、
-  `ssh_host` 工具注册与真实调用、加密凭据解密全部正常（`ssh_host list` 显示「密码 已配置」）；
-  `ssh_host test` 的握手在退化链路上超时（环境；harness 用 90–120 秒连接预算复跑）。
-- 上述三轮审查修复（job 退出码、CLIXML、S4U、CJK 分块、start 往返等）见 CHANGELOG 的
-  「Fixed（发布前独立审查发现）」。
-
-### 1.2.0 按需门控回归（真实 Loader）
-
-沙箱：devkit headless `ondemand-dsh-ssh`（`template: headless`，装本包 1.2.0，权限
-`danger-full-access`），一次任务里依次做三步，贴原始输出：
-
-| 步 | 动作 | 原始结果 |
-|---|---|---|
-| 1 | **不加载技能**，直接调 `ssh_host {"action":"list"}` | `Error: unknown tool "ssh_host"`（工具不在模型工具表里） |
-| 2 | `skill {"name":"ssh-remote"}` | 返回以 `<skill_content name="ssh-remote">` 开头；前 200 字符的截断点落在标题行 `# SSH 远程操作` 的 `# SSH` 处（wrapper 前缀 195 字符 + 正文前 5 字符） |
-| 3 | 再调 `ssh_host {"action":"list"}` | 真实执行并返回：「还没有保存任何服务器。用 `ssh_host action="add" name="…" host="…" user="…" password="…"` 添加，或从「设置 → 插件 → SSH 服务器」页面添加。」 |
-
-判定：第 1 步 `unknown tool` ⇒ 门控生效；第 3 步真实返回（不是 unknown tool）⇒ skill 加载后
-注册重新可见。离线门控细节由 `test/on-demand.test.mjs` 的 12 条用例覆盖。
-
-> 备注：同一次回归的第一版任务里，模型因为「工具本来就不在函数表里」而拒绝发起调用、只回报
-> 「没有这个工具」，没有给出 `unknown tool` 字符串。因此重跑时明确要求它即使不在函数表也要发出
-> 一次 `name="ssh_host"` 的调用，才拿到上面这条 harness 原文。**两条记录都说明同一件事：加载技能
-> 前 `ssh_host` 不在工具表里**；区别只是模型会不会去撞那一下。
-
-### DSH 0.2.2-rc.2 回归（1.1.8）
-
-- **核对**：Host 侧 `settings.configure(presentation, owner)` 签名、`credentials` 的
-  `resolve/describe/set/unset`、`tools.register`、自建 RPC 通道（`connection.rpc.handle` /
-  `webServer`）在 rc.2 源码里均未变；Client 侧 `configForms.get/whileServed`、`plugins.item`
-  槽位、`remote.credentials`、上述 primitives 导出在 rc.2 中均存在。
-- **devkit web 沙箱**（`b-ssh`）：`dsh-ssh@1.1.7 is loaded: its client half is in the page's manifest`
-  （引号内是沙箱当时的实际输出，当时 link 的版本是 1.1.7；本次只升版本号 + 写文档，未改代码），
-  打开时**控制台 0 错误**；真实点击流程（关预览说明 /「开始使用」→ 侧边栏「插件」→ 点「SSH 服务器」）
-  打开设置页：服务器列表（0 台，含「刷新」「添加服务器」）、默认行为三段（默认服务器下拉、
-  单次输出上限 65536、连接超时 15000、优先本地下载后上传开关）、「保存」、存储位置
-  （`servers.json` 路径 + 密钥存储 + 构建戳）全部渲染；点「添加服务器」后表单完整出现
-  （名称 / 主机 / 端口 22 / 用户名 / 认证方式 / 密码 / 私钥 / 备注 / 默认远程目录 + 添加/取消），
-  点「取消」后表单关闭、空状态恢复。
-- **离线单测**：`node --test "test/**/*.test.mjs"` → **137 / 137 通过**。
-
-### DSH 0.2.2-rc.1 回归（1.1.5）
-
-- **Host 行**：真实桌面版（0.2.2-rc.1，profile `desktop`，行 `ssh`）`fiberPhase=active`；`ssh_host action="list"`
-  正常返回已保存服务器与密码配置状态。
-- **devkit web 沙箱**（`ui-ssh`）：`dsh-ssh@1.1.4 is loaded: its client half is in the page's manifest`
-  （引号内是沙箱当时的实际输出，当时 link 的版本是 1.1.4；本次只升版本号 + 写文档，未改代码）；
-  真实点击流程（关「开始使用」→ 插件 → 查看 SSH 服务器）打开设置页：服务器列表（0 台，含「刷新」「添加服务器」）、
-  默认行为三段（默认服务器下拉、单次输出上限 65536、连接超时 15000、优先本地下载后上传开关）、「保存」、
-  存储位置（`servers.json` 路径 + 密钥存储「加密文件」+ 构建戳）全部渲染；点「刷新」走 RPC 成功回包；
-  全程**控制台 0 错误**。
-- **离线单测**：`node --test "test/**/*.test.mjs"` → **131 / 131 通过**。
-
-## 仓库与许可证
-
-- 仓库：<https://github.com/lldwb/dsh-ssh>（公开）
-- 许可证：[MIT](./LICENSE)
-- `package.json` 里的 `"private": true` 只阻止误发 npm，不影响本地安装，也与仓库可见性无关。
+`test/live-windows.mjs` 是环境变量驱动的 Windows 真机 E2E（缺环境变量时跳过），用法见文件头注释。
 
 ## 图标
 
@@ -627,3 +533,10 @@ dsh-ssh/
 改图标的正确顺序：改 `icon.svg` → `node <devkit>/scripts/embed-plugin-artwork.mjs .`（同步 `client.js` 里的
 `ITEM_ARTWORK_URI`）→ 跑本包测试。图标规范全文见 dsh-plugin-devkit 的 skill
 `dsh-plugin-development/references/icon-design-language.md`。
+
+## 仓库与许可证
+
+- 仓库：<https://github.com/lldwb/dsh-ssh>（公开）
+- 许可证：[MIT](./LICENSE)
+- `package.json` 里的 `"private": true` 只阻止误发 npm，不影响本地安装，也与仓库可见性无关。
+- 变更历史见 [CHANGELOG.md](./CHANGELOG.md)。

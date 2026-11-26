@@ -4,6 +4,14 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## 1.3.2 — 2026-11-26
+
+### 文档：README 整理为只描述当前版本，补清单仓库字段与发版 tag
+
+纯文档改动，无行为变化：README 只保留当前版本的能力、安装、用法、配置、边界与安全说明，
+删去版本史、验证/回归记录与日期；`package.json` 的 `repository` / `homepage` / `bugs`
+核对为指向本仓库；补 annotated tag `v1.3.2`。
+
 ## 1.3.1 — 2026-11-25
 
 ### 文档：README 补「加载方式」标记（devkit 约定 §10.0）
