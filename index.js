@@ -58,6 +58,10 @@ import { createSshService } from './lib/service.mjs';
 import { SKILL_DEFINITION, SKILL_NAME } from './lib/skill.mjs';
 import { buildTools } from './lib/tools.mjs';
 import { mountRpc } from './lib/rpc.mjs';
+import { desktopControlRegistered, locateDesktopControl } from './lib/desktop-control.mjs';
+import { createRemoteDesktop } from './lib/remote-desktop.mjs';
+import { REMOTE_DESKTOP_SKILL_DEFINITION, REMOTE_DESKTOP_SKILL_NAME } from './lib/skill-remote-desktop.mjs';
+import { buildRemoteDesktopTools } from './lib/tools-remote-desktop.mjs';
 
 /** Cordis plugin name, used by loader diagnostics. */
 export const name = 'dsh-ssh';
@@ -88,7 +92,7 @@ export const inject = ['tools'];
  * Bumped whenever the observable behaviour changes, so "did the running process
  * pick up my edit" is answerable from the output alone.
  */
-export const BUILD = '2026-11-24.4';
+export const BUILD = '2026-11-27.1';
 
 /**
  * Volatile fields are editable from the settings page; the rest is load-time
@@ -111,6 +115,23 @@ export const Config = z.object({
   // once in `apply()`, so this switch takes effect on the next plugin load
   // (disable/enable or restart), not on the next tool call.
   onDemand: z.boolean().default(true),
+  // ── Remote Windows desktop component (1.4.0) ──────────────────────────────
+  // The component reuses dsh-desktop-control's agent script over SSH, so it is
+  // only available while that plugin is installed AND enabled. `remoteDesktop`
+  // is read at load time: turning the component off changes registration.
+  remoteDesktop: z.boolean().default(true),
+  // Optional explicit path to the dsh-desktop-control package, for an install
+  // layout the profile scan cannot see. Empty = auto-detect from the live profile.
+  remoteDesktopControlDir: z.string().default(''),
+  // Per-operation timeout of one remote desktop call (agent startup + task).
+  remoteDesktopTimeoutMs: z.number().step(1000).min(5000).max(300000).default(60000).volatile(),
+  // Default screenshot width for `ssh_desktop_screen action="screenshot"`; 0 keeps
+  // the capture at physical-pixel size (then image pixels = click coordinates).
+  remoteDesktopScreenshotMaxWidth: z.number().step(1).min(0).max(8192).default(1600).volatile(),
+  // Ask the remote agent to flash its "dsh is operating this desktop" indicator.
+  // Off by default: a one-shot run would flash it for every action, and it also
+  // registers a global panic hotkey in the remote user's session.
+  remoteDesktopIndicator: z.boolean().default(false),
 });
 
 /**
@@ -136,13 +157,13 @@ export function readOption(config, key, fallback) {
 }
 
 /**
- * Build the on-demand gate: tools stay out of the model's tool table until this
- * plugin's skill has been loaded.
+ * Build an on-demand gate: one tool group stays out of the model's tool table
+ * until **its own** skill has been loaded.
  *
  * Three sources all count as "activated":
- *  1. the model loaded `SKILL_NAME` with the `skill` tool (observed via `tools/result`);
- *  2. the user invoked `/ssh-remote` (a `skill-invocation` user message);
- *  3. the session's request header already declares one of our tools — resume/fork
+ *  1. the model loaded `skillName` with the `skill` tool (observed via `tools/result`);
+ *  2. the user invoked `/<skill-name>` (a `skill-invocation` user message);
+ *  3. the session's request header already declares one of these tools — resume/fork
  *     drops the in-memory mark, and the header is what the model was actually shown.
  *
  * **fail-open**: when the agent cannot see a `skill` tool at all (minimal mode),
@@ -152,27 +173,37 @@ export function readOption(config, key, fallback) {
  * service lives in the preset scope and a host-plane plugin cannot see it, which
  * would make the gate fail open permanently (i.e. no gating at all).
  *
+ * `available` is an extra condition for a group with a runtime prerequisite (the
+ * remote desktop component needs `dsh-desktop-control` enabled). It is evaluated
+ * on every step, so disabling the prerequisite from the plugins page hides the
+ * group immediately instead of at the next dsh restart.
+ *
  * @param {any} ctx - the plugin context.
- * @param {string[]} toolNames - this plugin's tool names (resume fallback).
- * @param {boolean} enabled - config switch; `false` returns undefined = always on.
+ * @param {{
+ *   skillName: string,
+ *   toolNames: string[],
+ *   enabled: boolean,
+ *   available?: () => boolean,
+ * }} spec - the group's identity and switches.
  * @returns {((context: { agent?: any }) => boolean) | undefined} the `when` predicate.
  */
-function createToolGate(ctx, toolNames, enabled) {
+function createSkillGate(ctx, spec) {
+  const { skillName, toolNames, enabled, available } = spec;
   if (!enabled) return undefined;
 
-  /** Agents that already loaded this plugin's skill. */
+  /** Agents that already loaded this group's skill. */
   const marked = new WeakSet();
 
   ctx.on?.('tools/result', (exec, result) => {
     if (exec?.agent === undefined || exec.name !== 'skill' || result?.isError === true) return;
     const args = exec.arguments;
-    if (args !== null && typeof args === 'object' && args.name === SKILL_NAME) marked.add(exec.agent);
+    if (args !== null && typeof args === 'object' && args.name === skillName) marked.add(exec.agent);
   });
 
   ctx.on?.('session/event', (session, event) => {
     if (event?.type !== 'user/message') return;
     const source = event.data?.source;
-    if (source?.kind !== 'skill-invocation' || source.name !== SKILL_NAME) return;
+    if (source?.kind !== 'skill-invocation' || source.name !== skillName) return;
     const agent = ctx.get?.('agents')?.get?.(session?.id);
     if (agent?.session === session) marked.add(agent);
   });
@@ -180,6 +211,7 @@ function createToolGate(ctx, toolNames, enabled) {
   ctx.on?.('agent/disposed', ({ agent }) => marked.delete(agent));
 
   return ({ agent }) => {
+    if (available !== undefined && available() !== true) return false;
     if (agent === undefined) return true;
     // No skill loader in this mode → do not gate (keep the tools registered).
     if (ctx.tools?.get?.('skill', agent) === undefined) return true;
@@ -192,6 +224,18 @@ function createToolGate(ctx, toolNames, enabled) {
       return false;
     }
   };
+}
+
+/**
+ * Backwards-compatible wrapper for the `ssh-remote` group.
+ *
+ * @param {any} ctx - the plugin context.
+ * @param {string[]} toolNames - the six `ssh_*` tool names.
+ * @param {boolean} enabled - config switch; `false` returns undefined = always on.
+ * @returns {((context: { agent?: any }) => boolean) | undefined} the `when` predicate.
+ */
+function createToolGate(ctx, toolNames, enabled) {
+  return createSkillGate(ctx, { skillName: SKILL_NAME, toolNames, enabled });
 }
 
 /**
@@ -240,6 +284,55 @@ export function apply(ctx, config) {
     scoped.effect(() => scoped.skills.register(SKILL_DEFINITION), 'dsh-ssh: skill ssh-remote');
   });
 
+  // ── Remote Windows desktop component (1.4.0) ───────────────────────────────
+  // Reuses dsh-desktop-control's agent script over SSH instead of shipping a
+  // second desktop implementation. The package is located once at load time; the
+  // "is it enabled" half is re-asked on every gate evaluation, so disabling the
+  // prerequisite in the plugins page hides this group immediately.
+  let remoteDesktopSummary = 'disabled';
+  if (readOption(config, 'remoteDesktop', true) !== false) {
+    const located = locateDesktopControl({
+      dshHome,
+      override: String(readOption(config, 'remoteDesktopControlDir', '')),
+    });
+    if (located.found !== true) {
+      remoteDesktopSummary = `inactive (${located.notes.join('; ')})`;
+      ctx.logger?.info?.(`dsh-ssh: remote desktop component inactive — ${located.notes.join('; ')}`);
+    } else {
+      for (const note of located.notes) ctx.logger?.warn?.(`dsh-ssh: remote desktop: ${note}`);
+      const remoteOptions = () => ({
+        timeoutMs: Number(readOption(config, 'remoteDesktopTimeoutMs', 60000)),
+        screenshotMaxWidth: Number(readOption(config, 'remoteDesktopScreenshotMaxWidth', 1600)),
+        indicator: readOption(config, 'remoteDesktopIndicator', false) === true,
+      });
+      const remote = createRemoteDesktop({
+        ctx,
+        service,
+        locator: located,
+        options: remoteOptions,
+        logger: ctx.logger ?? null,
+      });
+      const remoteTools = buildRemoteDesktopTools({ service, remote, options: remoteOptions });
+      const remoteGate = createSkillGate(ctx, {
+        skillName: REMOTE_DESKTOP_SKILL_NAME,
+        toolNames: remoteTools.map((definition) => definition.name),
+        enabled: true,
+        available: () => desktopControlRegistered(ctx),
+      });
+      for (const definition of remoteTools) {
+        ctx.effect(
+          () => ctx.tools.register(definition, remoteGate === undefined ? {} : { when: remoteGate }),
+          `dsh-ssh: tool ${definition.name}`,
+        );
+      }
+      ctx.inject(['skills'], (scoped) => {
+        scoped.effect(() => scoped.skills.register(REMOTE_DESKTOP_SKILL_DEFINITION), 'dsh-ssh: skill ssh-remote-desktop');
+      });
+      remoteDesktopSummary = `${remoteTools.length} tools via skill "${REMOTE_DESKTOP_SKILL_NAME}" (dsh-desktop-control ${located.version}${located.missingOps.length === 0 ? '' : `, missing ops: ${located.missingOps.join(',')}`})`;
+      ctx.logger?.info?.(`dsh-ssh: remote desktop component ready — ${remoteDesktopSummary} at ${located.packageDir}`);
+    }
+  }
+
   // Pooled sockets must not outlive the plugin: a disable/enable cycle (the
   // documented way to hot-apply a patch change) would otherwise leak one sshd
   // session per reload.
@@ -276,6 +369,6 @@ export function apply(ctx, config) {
 
   ctx.logger?.info?.(
     `dsh-ssh: ready (${definitions.length} tools ${gate === undefined ? 'always-on' : `on-demand via skill "${SKILL_NAME}"`}, `
-    + `dshHome=${dshHome}, secretStore=${service.secrets.kind}, build=${BUILD})`,
+    + `remote desktop: ${remoteDesktopSummary}, dshHome=${dshHome}, secretStore=${service.secrets.kind}, build=${BUILD})`,
   );
 }

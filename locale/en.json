@@ -1,7 +1,7 @@
 {
   "meta": {
     "title": "SSH servers",
-    "description": "Connect to SSH servers from dsh: run commands, move files, and poll long-running jobs."
+    "description": "Connect to SSH servers from dsh: run commands, move files, and poll long-running jobs. With dsh-desktop-control enabled, also drive a remote Windows desktop over SSH."
   },
   "settings": {
     "title": "SSH servers",

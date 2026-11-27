@@ -1,7 +1,7 @@
 {
   "meta": {
     "title": "SSH 服务器",
-    "description": "在 dsh 里直接连 SSH 服务器：执行命令、上传下载文件、跑后台长任务并读取日志。"
+    "description": "在 dsh 里直接连 SSH 服务器：执行命令、上传下载文件、跑后台长任务并读取日志；dsh-desktop-control 启用时还能通过 SSH 远程操作 Windows 桌面。"
   },
   "settings": {
     "title": "SSH 服务器",

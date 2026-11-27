@@ -6,7 +6,7 @@
 # 行 id 同时是设置页命名空间（settings-page skill §4.2）：改这里必须同步改
 # index.js 的 SETTINGS_NAMESPACE 与 client.js 的 SETTINGS_NS。
 #
-# 注意：id 定向 patch 会**整体替换** config、不做深合并，要覆盖就写全 5 个字段。
+# 注意：id 定向 patch 会**整体替换** config、不做深合并，要覆盖就写全全部字段。
 - insert:
     - id: dsh-ssh
       name: 'dsh-ssh'
@@ -26,3 +26,21 @@
         #   它不是 volatile，改值不会在下一次工具调用就生效。
         #   没有 `skill` 工具的模式（minimal 等）自动 fail-open，保持常驻。
         onDemand: true
+        # ── 远程 Windows 桌面组件（1.4.0）──────────────────────────────────
+        # 通过 SSH 操作另一台 Windows 电脑的真实桌面（截图/鼠标/键盘/窗口/UIA）。
+        # 它复用 dsh-desktop-control 的桌面代理脚本，所以**前提是 dsh-desktop-control 已安装并启用**；
+        # 未启用时这两个工具不出现（fail-closed），也不会有任何远程副作用。
+        # 远端要求：Windows + PowerShell 5.1+，且该 SSH 账号当前有交互式登录桌面。
+        # 设 false = 关闭整个组件（不注册工具与 skill）。
+        remoteDesktop: true
+        # 可选：显式指定 dsh-desktop-control 包目录（默认从当前 profile 自动定位）。
+        # 只有在非标准安装布局、自动定位失败时才需要填，例如：
+        #   remoteDesktopControlDir: 'C:\Users\me\.dsh\profiles\desktop\node_modules\dsh-desktop-control'
+        remoteDesktopControlDir: ''
+        # 单次远程桌面操作超时（毫秒，含远端代理启动）。sequence 里含 wait 时注意放大。
+        remoteDesktopTimeoutMs: 60000
+        # 远程截图默认输出最大宽度（0 = 不缩放，此时图内像素 = 物理像素，便于精确点击）。
+        remoteDesktopScreenshotMaxWidth: 1600
+        # 是否在远端用户屏幕上闪「dsh 正在操作桌面」指示器（同时注册 Ctrl+Alt+F12 急停热键）。
+        # 默认关：每次动作都是一次性进程，开启会反复闪提示。
+        remoteDesktopIndicator: false
