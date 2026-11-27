@@ -4,6 +4,49 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## 1.4.0 — 2026-11-27
+
+### Added
+
+- **远程 Windows 桌面组件**（前提：`dsh-desktop-control` 已安装并启用）：
+  - 两个按需工具：`ssh_desktop_screen`（`info` / `windows` / `screenshot` / `ui_dump`）与
+    `ssh_desktop_action`（`focus` / `move` / `click` / `drag` / `scroll` / `down` / `up` /
+    `key` / `text` / `sequence` / `ui_invoke` / `ui_set_value`），由新 skill
+    `ssh-remote-desktop` 门控；`remoteDesktop: false` 关闭整组。
+  - **复用而不是复制**：桌面实现仍来自 `dsh-desktop-control` 的 `scripts/desktop-agent.ps1`
+    （DPI 感知、点击阶梯、截图降级、UIA）。`lib/desktop-control.mjs` 从当前 profile /
+    `process.argv` / `module URL` / `profiles/*` 定位已安装的包，并校验必需 op；
+    「是否启用」在每次门控与调用时问运行中的工具注册表（`desktop_screen_info`），
+    禁用 `dsh-desktop-control` 后下一步即隐藏，组件未安装时整组不注册且插件其余部分照常。
+  - **传输**：SSH 会话在 Session 0，没有交互式桌面；组件在远端注册**交互式计划任务**
+    （Interactive logon + Highest），把代理跑进用户会话。每次调用 = 「SSH → 起任务 →
+    代理执行 → 回传」一次往返；请求/响应走远端目录下的文件，截图远端落盘后 SFTP 取回本机。
+  - **编码**：代理 stdin/stdout 用 `.cmd` 的操作系统级重定向（`<` / `>`），避免 .NET 字符串
+    管道按控制台代码页解码 UTF-8（实测中文窗口标题会变 `绠＄悊鍛?`）。
+  - **不打扰远端用户**：任务经 `wscript.exe` + `agent.vbs` 以隐藏窗口启动。实测直接让计划任务
+    跑 `cmd` 会在远端桌面弹出抢焦点的控制台窗口，导致 `info`/`windows` 报告的前台窗口其实是
+    自己的控制台、且其 hwnd 每次调用都变；隐藏启动后前台窗口与 hwnd 恢复正常。
+  - 截图的 `maxWidth: 0` 可选不缩放，此时图内像素 = 物理像素，便于把「图里看到的点」
+    直接换算成点击坐标；返回 `frame` / `scale` 供缩放模式换算。
+  - 失败可诊断：超时按「有没有 explorer 交互式会话 / 任务状态 / LastTaskResult」给结论；
+    响应缺失时自动重传代理并重试一次；远端代理的 stderr 尾巴进诊断。
+  - 新增配置：`remoteDesktop` / `remoteDesktopControlDir` / `remoteDesktopTimeoutMs` /
+    `remoteDesktopScreenshotMaxWidth` / `remoteDesktopIndicator`。
+- 新增 `lib/desktop-control.mjs`、`lib/remote-desktop.mjs`、`lib/tools-remote-desktop.mjs`、
+  `lib/skill-remote-desktop.mjs`、`lib/skill-remote-desktop-content.md`。
+- 新增 `test/remote-desktop.test.mjs`（30 条：远端脚本结构 / 包定位 / 线协议 / 两工具全 action
+  的 schema 校验 / 双门控与前提失效）与 `test/live-remote-desktop.mjs`（env 驱动的 Windows
+  真机 E2E，9 步：info / windows / 截图取回 / move / 隐藏启动器 / sequence / ui_dump / 前提拦截）。
+- 真实 Windows 主机 E2E：9/9 通过（含截图 2560×1440 取回、UIA dump 50/467 元素、
+  计划任务动作为 wscript + agent.vbs）。
+
+### Changed
+
+- `index.js` 的门控抽成 `createSkillGate()`（`createToolGate` 保留为 `ssh-remote` 的包装），
+  支持第二组工具自己的 skill 名与运行时前提判定；插件就绪日志新增远程桌面组件状态。
+- `cordis.patch.yml` 补齐全部配置字段与注释；README 新增「远程 Windows 桌面」一节，
+  并更新加载方式、配置、安全、限制、故障排查、实现结构与测试说明。
+
 ## 1.3.2 — 2026-11-26
 
 ### 文档：README 整理为只描述当前版本，补清单仓库字段与发版 tag

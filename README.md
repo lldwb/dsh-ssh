@@ -2,6 +2,8 @@
 
 在 [DeepSeek Harness（dsh）](https://github.com/deepseek-ai/deepseek-harness) 里直接连 SSH 服务器：执行命令、上传下载文件、从 URL 取文件到服务器、跑后台长任务并读取日志。把过去「每连一次就临时写一个 Python(paramiko) 脚本」的流程换成一次工具调用——服务器档案存一次、密码存一次，之后在一条会话里就能走完「探环境 → 传数据 → 起训练 → 轮询日志 → 取回权重」。
 
+在 `dsh-desktop-control` 已启用时，它还带一个**远程 Windows 桌面**组件：通过 SSH 操作另一台 Windows 电脑的真实桌面（截图看屏幕、鼠标点击拖拽、键盘输入、窗口聚焦、UI Automation），详见「远程 Windows 桌面」一节。
+
 给谁用：需要在远程机器（Linux / macOS / Windows）上干活的人——租 GPU 训练机、跑评测、部署服务、在大盘上处理数据。工具挂在 Host 顶层而不是某个 agent preset 里，所以标准模式与创造模式都能用。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
@@ -10,7 +12,9 @@
 
 加载方式：按需（skill: `ssh-remote`；入口：`skill` 工具 / `/ssh-remote`；关闭：该行 config 设 `onDemand: false`）
 
-六个 `ssh_*` 工具默认不进模型工具表，模型加载 `ssh-remote` skill 后从下一个模型步出现；`onDemand: false` 恢复常驻。原因与细节见「按需加载」一节。
+远程桌面组件：按需（skill: `ssh-remote-desktop`；入口：`skill` 工具 / `/ssh-remote-desktop`；关闭：该行 config 设 `remoteDesktop: false`）
+
+六个 `ssh_*` 工具默认不进模型工具表，模型加载 `ssh-remote` skill 后从下一个模型步出现；`onDemand: false` 恢复常驻。远程桌面的两个工具同理，由 `ssh-remote-desktop` skill 门控，并且**只在 `dsh-desktop-control` 已启用时**才可用。原因与细节见「按需加载」一节。
 
 ## 为什么需要它
 
@@ -36,7 +40,8 @@
 | **密码不进配置文件** | 服务器档案只有描述与凭据引用；密码存在 dsh 凭据库（没有该服务时降级为加密文件） |
 | **设置页** | 设置 → 插件 → SSH 服务器：服务器增删改、密码输入、测试连接、状态 |
 | **全局可用** | 插件行插在 Host 顶层，任何会话（标准 / 创造模式）都能调用 |
-| **按需加载** | 六个工具默认不进模型工具表（每请求省下约两万字符 schema），模型加载 `ssh-remote` skill 后从下一步出现；`onDemand: false` 恢复常驻 |
+| **远程 Windows 桌面** | `dsh-desktop-control` 已启用时，可通过 SSH 操作另一台 Windows 电脑的真实桌面：`ssh_desktop_screen`（info / screenshot / windows / ui_dump）与 `ssh_desktop_action`（focus / move / click / drag / scroll / key / text / sequence / ui_invoke / ui_set_value）。复用对方的桌面代理脚本，不自带第二套桌面实现 |
+| **按需加载** | 六个工具默认不进模型工具表（每请求省下约两万字符 schema），模型加载 `ssh-remote` skill 后从下一步出现；`onDemand: false` 恢复常驻；远程桌面两个工具由 `ssh-remote-desktop` skill 单独门控 |
 
 ## 安装
 
@@ -135,6 +140,7 @@ npm install
   然后在「设置 → 插件」里把本插件**禁用再启用**（或重启 dsh）——门控在**插件加载时**决定注册方式，它不是 volatile，改值不会在下一次工具调用就生效。
 - **fail-open 边界**：该模式里 agent 看不到 `skill` 工具时（`minimal` 等）**不门控**，六个工具保持常驻（判据是 `ctx.tools.get('skill', agent)`，不是宿主平面的 `ctx.get('skills')`——后者在 web 组合里看不到 preset 内注册的 skill 服务）。
 - **已知边界**：工具出现在「下一个模型步」而不是「同一步」，所以加载完技能的那一步很可能还调不到 `ssh_*`；技能正文里已经写明这一点，不要把它当成能力缺失。PTC 模式下请求头只记 `run_code`，恢复/分叉后需要在会话里重新加载一次技能。
+- **远程桌面的两个工具是第二组**：它们由 `ssh-remote-desktop` 门控（加载 `ssh-remote` **不会**顺带放出它们），并且在 `dsh-desktop-control` 被禁用时对下一步立即隐藏（门控在每一步重新问一次工具注册表）。组件未安装 `dsh-desktop-control` 时整组不注册，插件其余部分照常工作。
 
 ## 工具参考
 
@@ -319,7 +325,7 @@ ssh_download host="gpu" remotePath="runs/best.pt" localPath="D:\\runs\\best.pt"
 
 ## 配置项
 
-插件行在 `cordis.patch.yml` 里带五个配置项：
+插件行在 `cordis.patch.yml` 里带这些配置项：
 
 | 字段 | 默认值 | 范围 | 说明 | 生效时机 |
 |---|---|---|---|---|
@@ -328,8 +334,13 @@ ssh_download host="gpu" remotePath="runs/best.pt" localPath="D:\\runs\\best.pt"
 | `connectTimeoutMs` | `15000` | 1000–120000 | 建立 SSH 连接的超时 | 下一次连接（每次连接前从配置同步到连接池） |
 | `preferLocalRelay` | `true` | — | `ssh_fetch` 不传 `mode` 时的默认模式：`true` = 本机下载后上传（`local-relay`），`false` = 服务器直接下载（`remote-direct`） | 下一次 `ssh_fetch` 调用 |
 | `onDemand` | `true` | — | 六个 `ssh_*` 工具是否按需加载：`true` = 加载 `ssh-remote` skill 后才出现，`false` = 常驻 | **下一次插件加载**（禁用再启用 / 重启），不是下一次工具调用 |
+| `remoteDesktop` | `true` | — | 是否注册远程桌面组件（两个 `ssh_desktop_*` 工具 + `ssh-remote-desktop` skill）。`false` 时整组不注册 | **下一次插件加载** |
+| `remoteDesktopControlDir` | `""` | — | 显式指定 `dsh-desktop-control` 包目录；空串 = 从运行中的 profile / `process.argv` / 扫描 `profiles/*` 自动定位 | **下一次插件加载** |
+| `remoteDesktopTimeoutMs` | `60000` | 5000–300000 | 单次远程桌面操作的超时（含远端代理启动；`sequence` 含 `wait` 时注意放大） | 下一次调用 |
+| `remoteDesktopScreenshotMaxWidth` | `1600` | 0–8192 | `screenshot` 的默认输出最大宽度；`0` = 不缩放（图内像素 = 物理像素） | 下一次截图 |
+| `remoteDesktopIndicator` | `false` | — | 远端代理是否闪「dsh 正在操作桌面」指示器（同时注册 Ctrl+Alt+F12 急停热键）。一次性进程每次动作都会闪，默认关 | **下一次插件加载**（决定安装的启动器文本） |
 
-要改的话，在你自己的 profile `cordis.patch.yml` 里按行 id 定向覆盖。**注意 id 定向 patch 会整体替换 `config`，不做深合并**，所以五个字段要写全：
+要改的话，在你自己的 profile `cordis.patch.yml` 里按行 id 定向覆盖。**注意 id 定向 patch 会整体替换 `config`，不做深合并**，所以全部字段要写全：
 
 ```yaml
 - id: dsh-ssh
@@ -340,9 +351,14 @@ ssh_download host="gpu" remotePath="runs/best.pt" localPath="D:\\runs\\best.pt"
     connectTimeoutMs: 30000
     preferLocalRelay: true
     onDemand: true
+    remoteDesktop: true
+    remoteDesktopControlDir: ''
+    remoteDesktopTimeoutMs: 90000
+    remoteDesktopScreenshotMaxWidth: 0
+    remoteDesktopIndicator: false
 ```
 
-改完在「设置 → 插件」里把本插件禁用再启用（或重启 dsh），让 Loader 重新读取 patch。前四个字段都是 volatile：配置一旦读入，之后的工具调用 / 连接立即使用新值（`connectTimeoutMs` 在每次连接前同步到连接池），不需要为了改值再重载。`preferLocalRelay` 也可以在设置页的「默认行为」区直接开关。**`onDemand` 例外**：它决定的是「工具怎么注册」，所以只在插件加载时读一次。
+改完在「设置 → 插件」里把本插件禁用再启用（或重启 dsh），让 Loader 重新读取 patch。前四个字段与三个 `remoteDesktop*` 运行参数都是 volatile：配置一旦读入，之后的工具调用 / 连接立即使用新值（`connectTimeoutMs` 在每次连接前同步到连接池），不需要为了改值再重载。`preferLocalRelay` 也可以在设置页的「默认行为」区直接开关。**`onDemand`、`remoteDesktop`、`remoteDesktopControlDir`、`remoteDesktopIndicator` 例外**：它们决定的是「注册什么 / 安装什么」，只在插件加载时读一次。
 
 ## 服务器档案与密码存储
 
@@ -423,6 +439,7 @@ ssh_download host="gpu" remotePath="runs/best.pt" localPath="D:\\runs\\best.pt"
 - **host key 未做 pinning（已知限制）**：插件没有实现 known_hosts 校验，`ssh2` 默认接受任意 host key。也就是说，连接过程**不防御中间人**。在不可信网络上请自行用 VPN / 跳板机 / 网络层保护，或改用你能校验目标身份的方式。
 - **降级文件后端不是强安全边界**（见上一节）：需要强隔离时用凭据服务 + 密钥认证。
 - **权限建议**：给训练机用独立账号或独立密码，按需开机；用完可以 `ssh_host action="remove"` 删掉档案（密码引用如需清理，可在凭据库里手动删除）。
+- **远程桌面组件操作的是真实用户的桌面**：它不受 `dsh-desktop-control` 本地白/黑名单与急停文件约束（那些检查在运行 dsh 的机器上）。远端会留下代理脚本与一个交互式计划任务（不自动运行），详见「远程 Windows 桌面」。
 
 ## Windows 远端
 
@@ -452,6 +469,82 @@ Windows 上的 OpenSSH 默认 shell 是 `cmd.exe`，不能直接执行 POSIX 命
 - 默认 shell 是 WSL 的 `bash` 时会被当成 POSIX 远端（`uname` 报 Linux），此时 shell 与 SFTP
   看到的可能不是同一个文件系统——请改用 Windows 默认 shell，或全部使用 PowerShell 可达的盘符路径。
 
+## 远程 Windows 桌面
+
+在 `dsh-desktop-control` 已启用时，本插件多出两个工具，用来**通过 SSH 操作另一台 Windows 电脑的真实桌面**：截图看屏幕、鼠标点击拖拽、键盘输入、聚焦窗口、走 UI Automation。
+
+### 前提
+
+1. `dsh-desktop-control` 已安装并**启用**。本组件复用它的 `scripts/desktop-agent.ps1`（DPI 感知、点击阶梯、截图降级、UIA 都在里面），不自带第二套桌面实现；包目录在插件加载时从运行中的 profile 自动定位（必要时可用 `remoteDesktopControlDir` 指定）。
+2. 远端是 **Windows**，且 `ssh_host action="test"` 能连上（平台识别为 Windows）。
+3. 远端该 SSH 账号**当前有交互式登录桌面**（锁屏可以，注销/无会话不行）。计划任务按当前账号的交互式会话启动；检测不到会话时会返回可读错误，而不是一直等。
+4. 远端有 `wscript.exe`（Windows 自带）用于隐藏启动；没有时退化为可见的 `cmd` 启动（每次调用会在远端桌面闪一个控制台窗口）。
+
+组件被关闭（`remoteDesktop: false`）、`dsh-desktop-control` 未安装或被禁用时，这两个工具不出现；调用也会明确报 `PREREQUISITE_DISABLED`。
+
+### 为什么用「交互式计划任务」
+
+Windows OpenSSH 的会话落在 **Session 0**，那里没有交互式桌面：`SendInput`、`CopyFromScreen`、UI Automation 全都作用不到用户看到的窗口。所以组件在远端注册一个**交互式计划任务**（Interactive logon + Highest），由它把代理跑进用户会话；每次工具调用是一次「SSH → 起任务 → 代理执行一个动作 → 回传结果」的往返。代理的 stdin/stdout 由 `.cmd` 做操作系统级重定向（`.NET` 字符串管道会按控制台代码页解码 UTF-8，中文窗口标题会变乱码），并由 `wscript` + `agent.vbs` 以隐藏窗口启动——否则每次调用都会在远端桌面弹出一个抢焦点的控制台窗口。
+
+### 工具
+
+| 工具 | action | 说明 |
+|---|---|---|
+| `ssh_desktop_screen` | `info` | 屏幕/虚拟桌面/显示器（各自 DPI）/光标/前台窗口 |
+| | `windows` | 窗口列表（前台优先，其余按面积排序），拿 `hwnd` 或标题给后续动作 |
+| | `screenshot` | 远端截图并取回本机，返回 `path` 给 `read_image`；`maxWidth: 0` = 不缩放 |
+| | `ui_dump` | 窗口的 UI Automation 树（`hwnd` 或 `window` 标题；`uiFilter` / `maxNodes` 收窄） |
+| `ssh_desktop_action` | `focus` | 把窗口切到前台；`state` 可 `restore` / `maximize` / `minimize` |
+| | `move` / `click` / `drag` / `scroll` / `down` / `up` | 鼠标；坐标是远端屏幕的**物理像素** |
+| | `key` / `text` | 按键（`key` 或 `combo`，如 `Ctrl+C`）与输入文本（`\n` 换行、`\t` Tab） |
+| | `sequence` | 一次完成「聚焦窗口 + 多步动作」：`steps` 支持 `click` / `key` / `text` / `wait` |
+| | `ui_invoke` / `ui_set_value` | 按 UIA 的 `name` / `automationId` / `controlType` 触发控件或写输入框；不动鼠标、不抢焦点 |
+
+典型流程：
+
+```text
+ssh_host { action: "test", name: "win-pc" }                       # 先确认是 Windows 且连得上
+ssh_desktop_screen { action: "info", host: "win-pc" }              # 坐标、DPI、前台窗口
+ssh_desktop_screen { action: "windows", host: "win-pc", filter: "记事本" }
+ssh_desktop_screen { action: "screenshot", host: "win-pc", maxWidth: 0 }
+#   用 read_image 打开返回的 path，确认界面与目标位置
+ssh_desktop_action {
+  action: "sequence", host: "win-pc", window: "记事本",
+  steps: [
+    { action: "click", x: 400, y: 300 },
+    { action: "text", text: "hello 中文" },
+    { action: "key", combo: "Ctrl+S" },
+    { action: "wait", ms: 500 }
+  ]
+}
+ssh_desktop_screen { action: "screenshot", host: "win-pc" }        # 复核
+```
+
+### 坐标与截图
+
+- 所有坐标都是**物理像素**（代理进程 DPI-aware），不是系统设置里显示的「逻辑分辨率」；`info` 会给出主屏 DPI 与每块显示器的矩形/DPI。混合缩放时坐标仍统一用物理像素。
+- `screenshot` 返回 `frame`（实际覆盖的物理像素矩形）与 `scale`（物理像素 / 图像像素）。`maxWidth: 0` 时 `scale = 1`，**图内像素就是物理像素**：点击坐标 = `frame.x + 图上 x`、`frame.y + 图上 y`（截整屏时 frame 原点就是虚拟桌面原点）。默认会缩放到 1600 宽，按 `scale` 换算。
+- 图是空白（`blank: true`）= 远端锁屏/息屏或窗口最小化，不等于截图坏了；先让远端解锁，或对目标窗口 `state: "restore"`。
+- 截图尽量别用 `allowActivate`（会还原并切前台，打扰远端用户）。
+
+### 延迟与 `sequence`
+
+每次调用都是一次计划任务往返，约 **2–5 秒**（UIA 首次 attach 的 `ui_dump` 会更久）。所以**多步操作优先放进一个 `sequence`**：把 focus + click + text + key + wait 合成一次往返，而不是连续调四次工具。每一步的结论都在返回的 `steps` 里（失败会中止，可加 `continueOnError: true` 继续）。
+
+### 选择顺序（最不打扰优先）
+
+1. **UIA**：`ui_dump` 找到控件 → `ui_invoke` / `ui_set_value`；不动光标、不抢前台。
+2. **点击阶梯**：`click` 自动按 UIA → 后台消息 → 闪点 → 真实点击降级，返回里的 `planned` / `attempts` 说明用了哪一档。
+3. **真实输入**：以上都不可用时才落到真实 SendInput，这会动远端用户的鼠标/键盘。
+
+### 安全与边界
+
+- 这是**真实用户正在使用的桌面**：不要关闭带未保存内容的窗口，不要向不认识的窗口输入密码/令牌等敏感信息；动作前先 `windows` 看前台是谁，`click` 返回的 `coveredByTitle` 与目标窗口不一致说明点被挡住了。
+- 本组件**不套用** `dsh-desktop-control` 的本地白/黑名单与急停文件——那些检查在运行 dsh 的这台机器上，管不到远端。远端操作的目标由调用方自己确认。
+- `hwnd` 只在那个窗口还存在时有效：窗口被应用重建后要重新 `windows` 取。对可能被重建的窗口优先用 `window` 标题（`focus` / `sequence` / `ui_dump` 都支持），标题由代理在同一次运行里解析。
+- 需要 Windows PowerShell 5.1+，且远端允许注册交互式计划任务；注册被策略拒绝时会返回 Task Scheduler 的错误文本。
+- 远端会留下 `%USERPROFILE%\.dsh-ssh\remote-desktop\`（代理脚本 + 两个启动器 + 一次请求/响应文件）和一个计划任务 `dsh-ssh-remote-desktop-*`。任务不会自动运行，只在工具调用时启动；不再需要时手动删目录与任务即可。
+
 ## 已知限制
 
 - **远端支持 POSIX（Linux / macOS）与 Windows**：POSIX 命令按 bash/sh 写，Windows 命令按 PowerShell 写（自动识别）。Windows 的边界见「Windows 远端」一节。`ssh_job` 在 POSIX 上依赖远端有 `bash`（`setsid` 可选，没有时退化为 `nohup`）。
@@ -467,6 +560,10 @@ Windows 上的 OpenSSH 默认 shell 是 `cmd.exe`，不能直接执行 POSIX 命
 - **删除服务器不清理密码**：`ssh_host action="remove"` 只删档案，凭据库里的密码引用仍然在（这样误删档案后重新 add 同名服务器还能用回密码）。
 - **后台任务的状态依赖远端文件**：机器重启后任务目录（`<登录 home>/.dsh-ssh/jobs/`）里的 PID 可能指向已消失的进程，`status` 会报 `unknown`，但日志仍可读。`stop` 只发 SIGTERM，不跟进 SIGKILL。
 - **`update` 不能改名**：`name` 是主键；要改名请 `remove` 后 `add`。
+- **远程桌面只支持 Windows 远端**：POSIX 远端没有这套桌面代理；桌面操作请直接用 `ssh_exec` / `ssh_job`。
+- **远程桌面依赖交互式登录会话**：SSH 登录落在 Session 0，组件靠**交互式计划任务**把代理跑进用户会话；远端账号注销/无桌面会话、或 SSH 账号与登录桌面账号不一致时会超时并给出诊断，不会静默失败。
+- **远程桌面每次调用是一个计划任务往返**：约 2–5 秒（`ui_dump` 更久），多步操作请合并成 `sequence`；远端会留下 `~/.dsh-ssh/remote-desktop/` 与一个计划任务，不自动运行，不需要时手动删除。
+- **远程桌面的 hwnd 会失效**：窗口被应用重建后旧 `hwnd` 不再有效（返回 `WINDOW_NOT_FOUND`），重新 `windows` 取，或改用 `window` 标题。
 
 ## 故障排查
 
@@ -486,6 +583,14 @@ Windows 上的 OpenSSH 默认 shell 是 `cmd.exe`，不能直接执行 POSIX 命
 | Windows 上 `ssh_job start` 失败 | 错误里带 Task Scheduler 的 state / LastTaskResult：通常是没有注册计划任务的权限，或账号策略禁止 S4U |
 | 传输很慢 | 大目录先打包再传，见「已知限制」 |
 | `tool returned invalid output` | 插件自身的返回 schema 问题；请带上命令与原始输出开 issue |
+| 远程桌面工具不出现 | 先确认 `dsh-desktop-control` 已**启用**（设置 → 插件），再加载 `ssh-remote-desktop` skill；组件只在两者都满足时可用 |
+| `PREREQUISITE_DISABLED` | `dsh-desktop-control` 被禁用或未注册：启用它后再调用 |
+| `NOT_WINDOWS` | 目标是 Linux/macOS 远端；远程桌面只操作 Windows |
+| `REMOTE_DESKTOP_NO_INTERACTIVE_SESSION` | 远端没有该账号的交互式桌面会话：先在远端用同一账号登录桌面，再重试；诊断里带 explorer 会话号与任务状态 |
+| `TASK_REGISTER_FAILED` / `TASK_START_FAILED` | 远端不允许注册/启动交互式计划任务（权限或账号策略） |
+| `REMOTE_DESKTOP_EMPTY_RESPONSE` | 远端代理没产出响应：下一次调用会自动重新上传代理再试一次；仍失败看诊断里的 agent stderr |
+| `SCREENSHOT_INVALID` / `SCREENSHOT_TRANSFER_FAILED` | 截图 PNG 无效或 SFTP 取回失败；远端文件路径在错误里，可手动排查磁盘/权限 |
+| `UI_UNAVAILABLE` | 该窗口没有暴露 UI Automation 树；改用 `ssh_desktop_screen action="screenshot"` + 坐标点击 |
 
 ## 实现结构
 
@@ -502,8 +607,13 @@ dsh-ssh/
 │   ├── secrets.mjs     # 凭据库 / 加密文件两种密码后端
 │   ├── ssh.mjs         # ssh2 封装：连接池（keepalive + 空闲回收）、exec、SFTP、JobManager（平台感知）
 │   ├── windows.mjs     # Windows 远端：平台探测辅助、PowerShell 包装、路径转换、计划任务 job 脚本
+│   ├── desktop-control.mjs      # 定位已安装的 dsh-desktop-control（复用其代理脚本）
+│   ├── remote-desktop.mjs       # 远程桌面传输：交互式计划任务、请求/响应文件、截图取回
+│   ├── tools-remote-desktop.mjs # 远程桌面两个工具（ssh_desktop_screen / ssh_desktop_action）
+│   ├── skill-remote-desktop.mjs # `ssh-remote-desktop` 运行时 skill
+│   ├── skill-remote-desktop-content.md # 远程桌面说明书
 │   └── rpc.mjs         # 设置页的 RPC 通道（/dsh-ssh）
-├── cordis.patch.yml    # 顶层 insert：全局挂载 + 五个配置项
+├── cordis.patch.yml    # 顶层 insert：全局挂载 + 配置项
 ├── locale/{zh,en}.json # 插件卡片标题与描述
 ├── icon.svg
 ├── README.md
@@ -517,7 +627,8 @@ npm install          # 装 ssh2 与 schemastery
 npm test             # node --test "test/**/*.test.mjs"
 ```
 
-`test/live-windows.mjs` 是环境变量驱动的 Windows 真机 E2E（缺环境变量时跳过），用法见文件头注释。
+- `test/live-windows.mjs` 是环境变量驱动的 Windows 真机 E2E（缺环境变量时跳过），用法见文件头注释。
+- `test/live-remote-desktop.mjs` 是远程桌面组件的 Windows 真机 E2E（同样 env 驱动、缺变量跳过）：驱动真实工具层，覆盖 info / windows / 截图取回 / move / sequence / ui_dump / 隐藏启动器 / 前提拦截，并校验每个返回值对自己声明的 schema。动作刻意非破坏性（不点击、不输入、不改窗口状态）。
 
 ## 图标
 
