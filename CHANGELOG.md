@@ -4,6 +4,24 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## 1.4.1 — 2026-11-27
+
+### Fixed
+
+- **`ssh_desktop_action action="sequence"` 丢掉步骤结果**：当步骤里含 `text` / `key` 时，agent 的
+  `Invoke-TypeText` / `Invoke-KeyTap` 会把自身返回值写进 PowerShell 管道，冒泡成 `sequence` 的多个输出，
+  于是响应 `data` 是数组 `[text 结果, key 结果, 序列摘要]`。组件按对象解析时 `stepCount` / 失败信息全丢
+  （真机表现：动作确实执行了，却回报「序列 0 步」）。现在由 `selectAgentData()` 按形状取带
+  `steps` / `stepCount` 的元素，并用单测钉住该形态。agent 自身的修复归 `dsh-desktop-control`（它的本地工具
+  同样受影响），本组件不依赖某个具体版本。
+- 截图/操作流程在真机复测：`sequence` 现在正确回报 6 步、0 失败，保存文件内容逐字一致。
+
+### Changed
+
+- `test/live-remote-desktop.mjs` 新增**可选的真实操作闭环**（`DSH_SSH_LIVE_OPERATE=1`）：启动独立记事本 +
+  临时文件 → 聚焦、点击、输入中文、Ctrl+S → 用 SFTP 读回文件逐字核对。清理只关自己的标签/实例：
+  测试前记录是否已有记事本，若本测试独占该实例才结束它（Windows 11 记事本单实例带标签，全局误杀会关掉用户标签页）。
+
 ## 1.4.0 — 2026-11-27
 
 ### Added

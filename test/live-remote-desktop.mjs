@@ -9,6 +9,7 @@
  * DSH_SSH_LIVE_PORT=<port>          # optional, default 22
  * DSH_SSH_LIVE_DESKTOP_CONTROL=<dir># optional dsh-desktop-control package dir
  * DSH_SSH_LIVE_REQUIRED=1           # optional: a skip becomes a failure (CI)
+ * DSH_SSH_LIVE_OPERATE=1            # optional: also run the REAL input round trip
  * ```
  *
  * The test drives the **tool layer**, not the internal functions: every returned
@@ -23,11 +24,17 @@
  * - The remote files live under `<home>\.dsh-ssh\remote-desktop\`; the test leaves
  *   them in place (the component reuses them), and removes the screenshot files
  *   it produced locally in `finally`.
- * - Actions are deliberately non-destructive: `info`, `windows`, full-screen
- *   screenshot, a `move` to the **current** cursor position, a no-op `sequence`
- *   that waits 50 ms in the already-foreground window, and a `ui_dump` of the
- *   foreground window (allowed to report UI_UNAVAILABLE — some apps expose no tree).
- *   No clicks, no typing, no window state changes.
+ * - Default actions are deliberately non-destructive: `info`, `windows`,
+ *   full-screen screenshot, a `move` to the **current** cursor position, a no-op
+ *   `sequence` that waits 50 ms in the already-foreground window, and a `ui_dump`
+ *   of the foreground window (allowed to report UI_UNAVAILABLE — some apps expose
+ *   no tree). No clicks, no typing, no window state changes.
+ * - With `DSH_SSH_LIVE_OPERATE=1` the test additionally launches a **fresh
+ *   Notepad with its own temp file**, clicks into it, types Chinese text, saves
+ *   with Ctrl+S, and verifies the saved file content over SFTP. It closes only its
+ *   own tab (Alt+F4 after saving) and removes its temp directory + task; it never
+ *   kills Notepad globally (Windows 11 Notepad is single-instance with tabs, so a
+ *   blanket kill would close the user's tabs).
  */
 
 import crypto from 'node:crypto';
@@ -37,7 +44,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { createSshService } from '../lib/service.mjs';
-import { execCommand } from '../lib/ssh.mjs';
+import { execCommand, mkdirp, readRemoteText, resolveHome, withSftp, writeRemoteFile } from '../lib/ssh.mjs';
+import { psQuote } from '../lib/windows.mjs';
 import { locateDesktopControl } from '../lib/desktop-control.mjs';
 import { createRemoteDesktop, remoteTaskName } from '../lib/remote-desktop.mjs';
 import { buildRemoteDesktopTools } from '../lib/tools-remote-desktop.mjs';
@@ -296,6 +304,126 @@ try {
     }
     throw new Error(`ui_dump failed: ${lastError?.code ?? 'unknown'} ${lastError?.message ?? ''}`);
   });
+
+  if (process.env.DSH_SSH_LIVE_OPERATE === '1') {
+    const stamp = crypto.randomBytes(3).toString('hex');
+    const opProfile = service.resolveProfileFromArgs({ host: 'win' });
+    const opClient = await service.clientFor(opProfile);
+    const home = await resolveHome(opClient);
+    const opDir = `${home}\\dsh-ssh-live-op-${stamp}`;
+    const opTask = `dsh-ssh-live-op-${stamp}`;
+    const opFile = `${opDir}\\remote-desktop-test.txt`;
+    const expected = '远程桌面验证 OK\n第二行 line2\n符号 !@#$%';
+    const vbs = [
+      'Dim shell, fso, dir',
+      'Set shell = CreateObject("WScript.Shell")',
+      'Set fso = CreateObject("Scripting.FileSystemObject")',
+      'dir = fso.GetParentFolderName(WScript.ScriptFullName)',
+      'shell.Run "notepad.exe """ & dir & "\\remote-desktop-test.txt""", 1, False',
+      '',
+    ].join('\r\n');
+    let opWindow = null;
+    // Windows 11 Notepad is a single-instance app with tabs. If none was running
+    // before this test, the instance the test launches is exclusively ours and may
+    // be ended during cleanup; if the user already had Notepad open, we must not
+    // kill it (the test would attach a tab to their app).
+    const notepadBefore = await execCommand(
+      opClient,
+      '$n = @(Get-Process -Name Notepad -ErrorAction SilentlyContinue).Count; Write-Output $n',
+      { timeoutMs: 30000, maxOutputBytes: 1024 },
+    )
+      .then((result) => Number.parseInt(String(result.stdout).trim(), 10) || 0)
+      .catch(() => 0);
+    try {
+      await withSftp(opClient, async (sftp) => {
+        await mkdirp(sftp, opDir);
+        await writeRemoteFile(sftp, `${opDir}\\start.vbs`, Buffer.from(vbs, 'utf8'));
+        await writeRemoteFile(sftp, opFile, Buffer.from('', 'utf8'));
+      });
+      const setup = [
+        `$task = ${psQuote(opTask)}`,
+        `$dir = ${psQuote(opDir)}`,
+        `Unregister-ScheduledTask -TaskName $task -Confirm:$false -ErrorAction SilentlyContinue | Out-Null`,
+        `$exe = Join-Path $env:SystemRoot 'System32\\wscript.exe'`,
+        `$arg = '//B //NoLogo "' + (Join-Path $dir 'start.vbs') + '"'`,
+        `$action = New-ScheduledTaskAction -Execute $exe -Argument $arg -WorkingDirectory $dir`,
+        `$principal = New-ScheduledTaskPrincipal -UserId ([System.Security.Principal.WindowsIdentity]::GetCurrent().Name) -LogonType Interactive -RunLevel Highest`,
+        `Register-ScheduledTask -TaskName $task -Action $action -Principal $principal -Force | Out-Null`,
+        `Start-ScheduledTask -TaskName $task`,
+        `Start-Sleep -Seconds 2`,
+        `Get-Process -Name Notepad -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Id`,
+      ].join('; ');
+      const launched = await execCommand(opClient, setup, { timeoutMs: 60000, maxOutputBytes: 4096 });
+      if (!/^\d+$/m.test(launched.stdout.trim())) throw new Error(`Notepad did not start: ${launched.stdout.trim()} ${launched.stderr.trim()}`);
+
+      for (let attempt = 0; attempt < 6 && opWindow === null; attempt += 1) {
+        const value = await call('ssh_desktop_screen', { action: 'windows', host: 'win', filter: 'remote-desktop-test', limit: 10 });
+        opWindow = value.ok === true ? (value.windows[0] ?? null) : null;
+        if (opWindow === null) await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
+      if (opWindow === null) throw new Error('the Notepad window never appeared');
+
+      await step('operate (opt-in): click + Chinese typing + Ctrl+S reach the remote desktop', async () => {
+        const clickX = Math.round(opWindow.x + opWindow.width / 2);
+        const clickY = Math.round(opWindow.y + opWindow.height * 0.4);
+        const value = await call('ssh_desktop_action', {
+          action: 'sequence',
+          host: 'win',
+          hwnd: opWindow.hwnd,
+          state: 'restore',
+          steps: [
+            { action: 'click', x: clickX, y: clickY },
+            { action: 'wait', ms: 300 },
+            { action: 'text', text: expected },
+            { action: 'wait', ms: 300 },
+            { action: 'key', combo: 'Ctrl+S' },
+            { action: 'wait', ms: 1500 },
+          ],
+        });
+        if (value.ok !== true) throw new Error(`sequence failed: ${value.code} ${value.message}`);
+        if (value.sequence.stepCount !== 6) throw new Error(`expected 6 steps, got ${value.sequence.stepCount} (${value.message})`);
+        if (value.sequence.failedSteps !== 0) throw new Error(`failed steps: ${value.sequence.aborted}`);
+        let saved = '';
+        for (let attempt = 0; attempt < 8; attempt += 1) {
+          saved = (await withSftp(opClient, (sftp) => readRemoteText(sftp, opFile, { maxBytes: 65536 }))).replace(/^\uFEFF/, '');
+          if (saved.includes('远程桌面验证 OK')) break;
+          await new Promise((resolve) => setTimeout(resolve, 800));
+        }
+        const normalized = saved.replace(/\r\n/g, '\n').replace(/\n+$/, '');
+        if (normalized !== expected) {
+          throw new Error(`saved text mismatch: expected ${JSON.stringify(expected)}, got ${JSON.stringify(normalized)}`);
+        }
+        console.log(`[info] saved file content matches exactly: ${JSON.stringify(normalized)}`);
+      });
+
+      // Close only our own tab when possible: the file is saved, so Alt+F4 closes
+      // it without a prompt. Notepad 11 does not always honour synthesized
+      // Alt+F4; cleanup below therefore ends the instance when this test started
+      // it (notepadBefore === 0), which closes only tabs created by this run.
+      try {
+        await call('ssh_desktop_action', {
+          action: 'sequence',
+          host: 'win',
+          hwnd: opWindow.hwnd,
+          steps: [{ action: 'key', key: 'Alt+F4' }, { action: 'wait', ms: 500 }],
+        });
+      } catch (error) {
+        console.log(`[info] closing the test tab failed (harmless): ${error instanceof Error ? error.message : String(error)}`);
+      }
+    } finally {
+      const cleanupScript = [
+        `Unregister-ScheduledTask -TaskName ${psQuote(opTask)} -Confirm:$false -ErrorAction SilentlyContinue | Out-Null`,
+        notepadBefore === 0
+          ? 'Get-Process -Name Notepad -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue'
+          : "Write-Output 'notepad was already running before the test; leaving it alone'",
+        `Start-Sleep -Milliseconds 800`,
+        `for ($i = 0; $i -lt 6; $i++) { Remove-Item -LiteralPath ${psQuote(opDir)} -Recurse -Force -ErrorAction SilentlyContinue; if (-not (Test-Path -LiteralPath ${psQuote(opDir)})) { break }; Start-Sleep -Milliseconds 600 }`,
+        `if (Test-Path -LiteralPath ${psQuote(opDir)}) { Write-Output 'cleanup: temp dir could not be removed (a tab may still hold the file)' } else { Write-Output 'cleanup: temp dir removed' }`,
+      ].join('; ');
+      const cleanupResult = await execCommand(opClient, cleanupScript, { timeoutMs: 60000, maxOutputBytes: 4096 }).catch(() => null);
+      if (cleanupResult !== null) console.log(`[cleanup] ${String(cleanupResult.stdout).trim()}`);
+    }
+  }
 
   await step('prerequisite: the component refuses to work when dsh-desktop-control is not registered', async () => {
     const gateCtx = { tools: { get: () => undefined } };

@@ -48,6 +48,7 @@ import {
   parseMarkers,
   remoteDesktopPaths,
   remoteTaskName,
+  selectAgentData,
 } from '../lib/remote-desktop.mjs';
 import { REMOTE_DESKTOP_TOOL_NAMES, buildRemoteDesktopTools } from '../lib/tools-remote-desktop.mjs';
 import { REMOTE_DESKTOP_SKILL_DEFINITION, REMOTE_DESKTOP_SKILL_NAME } from '../lib/skill-remote-desktop.mjs';
@@ -220,6 +221,33 @@ test('parseAgentResponse finds the matching id and separates ready from response
   const missing = parseAgentResponse('{"ready":true}', 1);
   assert.equal(missing.ok, false);
   assert.equal(missing.code, 'REMOTE_DESKTOP_NO_RESPONSE');
+});
+
+test('selectAgentData recovers the sequence summary from the agent array payload', () => {
+  // Captured from a real host: `sequence` with text/key steps leaks the step
+  // functions' return values into the response, so data is an array and the last
+  // element (the actual summary) must be chosen by shape, not by position.
+  const leaked = [
+    { characters: 28, foreground: { hwnd: 1, title: 'x' } },
+    { keys: ['Ctrl', 'S'], times: 1 },
+    { hwnd: 1, title: 'x', focused: true, stepCount: 6, failedSteps: 0, steps: [{ index: 1, action: 'click', ok: true }] },
+  ];
+  const summary = selectAgentData('sequence', leaked);
+  assert.equal(summary.stepCount, 6);
+  assert.equal(summary.steps.length, 1);
+
+  // The same array in a different order still resolves by shape.
+  const reordered = [leaked[2], leaked[0], leaked[1]];
+  assert.equal(selectAgentData('sequence', reordered).stepCount, 6);
+
+  // Non-sequence arrays use the last object; scalars and null degrade to {}.
+  assert.deepEqual(selectAgentData('windows', [{ a: 1 }, { b: 2 }]), { b: 2 });
+  assert.deepEqual(selectAgentData('info', { width: 1 }), { width: 1 });
+  assert.deepEqual(selectAgentData('info', []), {});
+  assert.deepEqual(selectAgentData('info', null), {});
+  assert.deepEqual(selectAgentData('info', 'text'), {});
+  // An array with no summary falls back to the last object for sequence too.
+  assert.deepEqual(selectAgentData('sequence', [{ characters: 1 }, { keys: [] }]), { keys: [] });
 });
 
 test('isPng accepts only the PNG signature', () => {

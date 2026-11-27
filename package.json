@@ -1,6 +1,6 @@
 {
   "name": "dsh-ssh",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "在 DeepSeek Harness 里直接连接 SSH 服务器：执行命令、上传下载文件、跑后台长任务并读取日志；在 dsh-desktop-control 已启用时，还可通过 SSH 远程操作 Windows 电脑的真实桌面（截图、鼠标、键盘、窗口、UIA）。",
   "type": "module",
   "license": "MIT",

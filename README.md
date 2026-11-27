@@ -628,7 +628,7 @@ npm test             # node --test "test/**/*.test.mjs"
 ```
 
 - `test/live-windows.mjs` 是环境变量驱动的 Windows 真机 E2E（缺环境变量时跳过），用法见文件头注释。
-- `test/live-remote-desktop.mjs` 是远程桌面组件的 Windows 真机 E2E（同样 env 驱动、缺变量跳过）：驱动真实工具层，覆盖 info / windows / 截图取回 / move / sequence / ui_dump / 隐藏启动器 / 前提拦截，并校验每个返回值对自己声明的 schema。动作刻意非破坏性（不点击、不输入、不改窗口状态）。
+- `test/live-remote-desktop.mjs` 是远程桌面组件的 Windows 真机 E2E（同样 env 驱动、缺变量跳过）：驱动真实工具层，覆盖 info / windows / 截图取回 / move / sequence / ui_dump / 隐藏启动器 / 前提拦截，并校验每个返回值对自己声明的 schema。默认动作刻意非破坏性（不点击、不输入、不改窗口状态）；加 `DSH_SSH_LIVE_OPERATE=1` 才额外跑真实操作闭环：启动独立记事本 + 临时文件 → 点击、输入中文、Ctrl+S → SFTP 读回文件逐字核对。
 
 ## 图标
 
